@@ -128,7 +128,9 @@ PATROL → DETECT → CHASE → ATTACK sub-states
                          → STAGGERED (stagger bar filled)
                          → DOWN → DOWN_RECOVERY (knockdown attacks)
                          → GUARD / GUARD_BREAK  (canBlock enemies only)
+                         → SEARCH (LOS lost during CHASE)
                          → DEATH
+SEARCH → PATROL (search timer expires) | CHASE (player re-detected)
 ```
 
 `ATTACK_RECOVERY` is a mandatory post-attack state. The enemy cannot block, dodge, or chain
@@ -149,10 +151,56 @@ float   usageWeight                  // relative probability in weighted random 
 float   lastUsedCooldown             // seconds before this attack can be selected again
 ```
 
-**Blocking capability** is not universal. `EnemyDataSO` carries:
+#### EnemyDataSO
 
 ```csharp
-bool canBlock    // default false — most standard enemies have no guard state
+// Identity
+string  enemyId
+string  displayName
+
+// Stats (feed into StatSheet — WeaponDamage and Armor are native here, not from equipment)
+int     strength
+int     chi
+int     dexterity
+int     constitution
+int     level
+int     weaponDamage
+int     armor
+
+// Stagger
+float   maxStagger
+float   staggerDecayRate
+float   staggeredDuration
+
+// Combat capability
+bool    canBlock            // default false — most standard enemies have no guard state
+float   guardChance         // canBlock enemies only — probability of raising guard on hit
+float   guardDuration       // max time guard is held before lowering (even if not attacked)
+
+// Attack behavior
+List<AttackPatternSO> attackPool        // available attacks for this enemy
+float   mistakeChance                   // 0.0–1.0; how often attack conditions are ignored
+                                        // bosses: ~0.0, elites: ~0.05, grunts: ~0.15–0.25
+bool    useOrderedSequence              // if true, attackPool plays in authored order (index wraps)
+                                        // for scripted encounters; mistake roll picks randomly instead
+float   aiTickInterval                  // seconds between AI decisions (e.g. 0.2s)
+                                        // physics contacts still resolve every FixedUpdate
+
+// Spacing
+CombatProfile combatProfile
+
+// Detection
+float     alarmRadius                   // always-on close-range radius — no cone/LOS check
+float     visionRange                   // max distance of the vision cone
+float     visionAngle                   // cone half-angle in degrees (e.g. 60° = 120° total arc)
+float     detectReactionTime            // DETECT state duration before entering CHASE (e.g. 0.4s)
+LayerMask visionBlockers                // layers that block LOS (typically: Environment)
+
+// Patrol / Search
+float   searchDuration                  // seconds to scan at last known position before deaggro
+
+// Loot (placeholder — detailed when LootTable system is designed)
+// LootTableSO lootTable
 ```
 
 Only shield enemies, elites, and bosses set `canBlock = true`. Enemies where `canBlock = false`
@@ -166,6 +214,138 @@ PHASE_N_IDLE / PHASE_N_ATTACK_SET
 ENRAGE
 CINEMATIC_KILL
 ```
+
+---
+
+#### Enemy AI Behavior
+
+##### Detection
+
+Detection is evaluated on each AI tick while in `PATROL` or `SEARCH`:
+
+```
+float detMult         = player.StatSheet.DetectionRangeMultiplier   // gear modifier, default 1.0
+float effectiveAlarm  = alarmRadius  * detMult
+float effectiveVision = visionRange  * detMult
+
+1. if distance(player) <= effectiveAlarm
+     → DETECT immediately (no cone or LOS check — player is right there)
+2. elif player within effectiveVision AND within visionAngle of enemy forward:
+     Physics2D.Raycast(enemyEyes → player, distance, visionBlockers)
+     → clear  → DETECT
+     → blocked → no detection this tick
+```
+
+`visionAngle` is not scaled — stealth gear makes the player harder to spot at range, not
+easier to flank with.
+
+`DETECT` is a brief reaction state (`detectReactionTime` on `EnemyDataSO`, e.g. 0.4s) where
+the enemy plays a "!" animation before entering `CHASE`, telegraphing aggression to the player.
+
+##### PATROL
+
+`EnemyAIBase` holds scene-specific patrol data (not in `EnemyDataSO` — positions are
+instance-specific):
+
+```csharp
+List<Transform> patrolWaypoints    // ordered; enemy walks between them sequentially, wrapping
+float           patrolWaitTime     // seconds to idle at each waypoint before moving to next
+```
+
+Empty `patrolWaypoints` → stationary guard (idles in place indefinitely).
+
+##### SEARCH
+
+Entered when the enemy loses LOS during `CHASE` (player exits cone AND alarm radius):
+
+```
+1. Pathfind to last known player position
+2. Play scan animation; wait searchDuration seconds
+3. Player re-detected → CHASE
+4. searchDuration expires → resume PATROL from nearest waypoint
+```
+
+##### CHASE and Spacing
+
+`EnemyDataSO` carries a `CombatProfile` struct:
+
+```csharp
+struct CombatProfile {
+    float preferredRange           // desired player distance (melee ~2m, ranged ~8m)
+    float approachTolerance        // repositions if outside preferredRange ± this value
+    bool  retreatAfterAttack       // backs away after every attack
+    float retreatDistance          // distance to create post-attack (if retreatAfterAttack = true)
+    float retreatSpeedMultiplier   // speed scalar while retreating (default 0.5)
+                                   // makes ranged enemies feel sluggish rather than annoyingly nimble
+    float stumbleChance            // probability per retreat tick of stumbling (default 0)
+                                   // plays stumble animation + briefly halts movement
+                                   // use on nervous or physically unsteady enemy types
+    bool  paceWhileWaiting         // moves laterally at preferred range while waiting to attack
+    float paceSpeed                // lateral speed while pacing
+}
+```
+
+CHASE logic each AI tick:
+
+```
+dist = distance(player)
+if dist > preferredRange + approachTolerance  → pathfind toward player (full speed)
+elif dist < preferredRange - approachTolerance → pathfind away from player
+                                                  (retreatSpeedMultiplier applied; stumble check)
+else (in acceptable band)
+    if paceWhileWaiting → move laterally (reverse direction at random intervals)
+    → evaluate attack selection
+```
+
+##### Attack Selection
+
+On each decision tick while in `CHASE` or after `ATTACK_RECOVERY`:
+
+New fields added to `AttackPatternSO`:
+
+```csharp
+float minRange                              // 0 = no min; attack only valid when player >= this far
+float maxRange                              // 0 = no max; attack only valid when player <= this far
+TargetStateRequirement requiredPlayerState  // None = any; reuses enum from HitboxDataSO
+```
+
+Selection algorithm:
+
+```
+bool mistake = Random.value < mistakeChance
+
+if useOrderedSequence && !mistake:
+    selected = attackPool[sequenceIndex % attackPool.Count]; sequenceIndex++
+elif mistake:
+    selected = WeightedRandom(attackPool, respectCooldowns: true)
+else:
+    candidates = attackPool where: IsInRange(dist) && requiredPlayerState.Satisfies(playerState)
+                                   && lastUsedCooldown elapsed
+    if candidates empty → skip this tick, retry next
+    selected = WeightedRandom(candidates)
+
+→ enter ATTACK state with selected AttackPatternSO
+```
+
+`useOrderedSequence = true` on scripted encounters — attacks play in authored pool order.
+A mistake roll during a scripted sequence picks randomly instead of next-in-order (rare
+interruption that keeps scripted fights from feeling mechanical on repeat).
+
+##### GUARD Behavior (canBlock enemies only)
+
+Guard is raised reactively when a hit lands during `CHASE` or `ATTACK_RECOVERY`:
+
+```
+on hit received: if Random.value < guardChance → enter GUARD
+GUARD held until: guardDuration expires OR isUnblockable hit lands (GUARD_BREAK)
+```
+
+##### AI Decision Tick
+
+All AI decisions (detection, repositioning, attack selection) run on `aiTickInterval`, not
+every frame. Physics contacts resolve every `FixedUpdate` independently.
+
+Random jitter (`±0.05s` per enemy) prevents synchronized group decision waves.
 
 ---
 
@@ -740,6 +920,7 @@ into derived values used at runtime by the damage formula, health system, and ch
 | `AttackSpeedMultiplier` | f(Dexterity) — read by `AnimatorSpeedSync` to set `animator.speed`; also scales recovery frame durations |
 | `MovementSpeedMultiplier` | f(Dexterity) — read by `PlayerController` to scale movement velocity |
 | `LevelScale` | f(Level) — global damage scalar applied to all attacks |
+| `DetectionRangeMultiplier` | From equipment bonus overlay; default 1.0 — stealth gear reduces below 1.0; read by enemy detection to scale `visionRange` and `alarmRadius` |
 
 #### StatSheet
 
@@ -759,7 +940,7 @@ int level
 // Equipment overlay (player only — aggregated from all equipped items by EquipmentManager)
 // Enemies leave this zeroed out; their WeaponDamage and Armor are set directly as native stats
 StatBonus equipmentBonuses     // additive on top of base stats
-                               // contains: weaponDamage, armor (and future equipment stats)
+                               // contains: weaponDamage, armor, detectionRangeMultiplier
 
 // Derived (computed properties — never set directly, always calculated from raw stats)
 float MaxHealth                  // => f(constitution, level)
@@ -767,8 +948,10 @@ float MaxChiPool                 // => f(chi, level)
 float AttackSpeedMultiplier      // => 1f + (dexterity * attackSpeedCoefficient)
 float MovementSpeedMultiplier    // => 1f + (dexterity * movementSpeedCoefficient)
 float LevelScale                 // => f(level)
-int   WeaponDamage               // player: from equipmentBonuses; enemy: native stat, set directly
-int   Armor                      // player: from equipmentBonuses; enemy: native stat, set directly
+int   WeaponDamage                   // player: from equipmentBonuses; enemy: native stat, set directly
+int   Armor                          // player: from equipmentBonuses; enemy: native stat, set directly
+float DetectionRangeMultiplier       // from equipmentBonuses; default 1.0; stealth gear reduces below 1.0
+                                     // read by enemy AI detection to scale visionRange + alarmRadius
 // coefficients are configurable on a StatConfigSO, not hardcoded
 ```
 
@@ -1582,11 +1765,24 @@ room load and on `OnAbilityUnlocked` events. Opens with an animation and disable
 Each boss holds a `List<BossPhaseDataSO>`. Each phase defines:
 
 ```csharp
-float             hpThreshold                  // e.g. 0.66, 0.33
+float              hpThreshold                 // e.g. 0.66, 0.33
 List<AttackPatternSO> attackPool
-MovementBehavior  movementBehavior
-float             musicPhaseParameter
-bool              playCinematicOnEntry
+MovementBehaviorSO movementBehavior           // see MovementBehaviorSO below
+float              musicPhaseParameter
+bool               playCinematicOnEntry
+```
+
+**`MovementBehaviorSO`** — ScriptableObject defining per-phase boss movement:
+
+```csharp
+CombatProfile combatProfile           // shared spacing model (see section 2 — Enemy AI Behavior)
+
+// Boss-specific overrides
+bool    hasArenaAnchor                // if true, boss drifts toward arenaAnchor position
+Vector2 arenaAnchor                   // world-space anchor (e.g. arena center, throne position)
+float   arenaAnchorWeight             // 0–1: 0 = pure player pursuit, 1 = orbit anchor strongly
+                                      // e.g. 0.3 = mostly chase player, gradually drift to center
+bool    retreatToAnchorOnPhaseEnd     // move to arenaAnchor before phase transition cinematic
 ```
 
 Attack selection: weighted random from pool filtered by phase + player conditions (proximity,
@@ -1949,11 +2145,10 @@ earlier entries block more downstream work.
 
 | Priority | System | Why it's missing / what's needed |
 |---|---|---|
-| 1 | **Enemy AI** | State machine *states* are defined but no behavior logic exists: detection (vision cone? radius? LOS?), attack decision-making beyond "weighted random," aggression/spacing model, ranged vs. melee differences, boss AI phase navigation. Blocks any enemy implementation. |
-| 2 | **`EquipmentSO` definition** | `EquipmentManager`, `AbilityModifierSO`, and the loot system all reference `EquipmentSO` but its fields are never defined. Needs: equipment slot types (weapon, armor, accessory), stat contribution fields, modifier list, display data. Blocks all equipment/loot work. |
-| 3 | **Death & respawn flow** | Completely absent. What happens when HP reaches 0: death animation, which respawn point is selected, what state is restored (health, position, auras, enemy state), whether there is a death penalty. Needed before the health system or player controller can be considered complete. |
-| 4 | **Save system detail** | `WorldStateManager` mentions JSON serialization but the flow is vague: what triggers a save (room transition? checkpoint activation? manual?), checkpoint placement rules, save slot management, and how death-respawn integrates with the save state. Closely related to #3 but a separate design concern. |
-| 5 | **Loot & item drops** | Drop tables (enemy-specific? room-specific? global pool?), item pickup interaction, and a minimal inventory/equipment slot UI. The `AbilityModifierSO` pipeline is ready to consume items — nothing yet produces them. |
-| 6 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
-| 7 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
-| 8 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
+| 1 | **`EquipmentSO` definition** | `EquipmentManager`, `AbilityModifierSO`, and the loot system all reference `EquipmentSO` but its fields are never defined. Needs: equipment slot types (weapon, armor, accessory), stat contribution fields, modifier list, display data. Blocks all equipment/loot work. |
+| 2 | **Death & respawn flow** | Completely absent. What happens when HP reaches 0: death animation, which respawn point is selected, what state is restored (health, position, auras, enemy state), whether there is a death penalty. Needed before the health system or player controller can be considered complete. |
+| 3 | **Save system detail** | `WorldStateManager` mentions JSON serialization but the flow is vague: what triggers a save (room transition? checkpoint activation? manual?), checkpoint placement rules, save slot management, and how death-respawn integrates with the save state. Closely related to #2 but a separate design concern. |
+| 4 | **Loot & item drops** | Drop tables (enemy-specific? room-specific? global pool?), item pickup interaction, and a minimal inventory/equipment slot UI. The `AbilityModifierSO` pipeline is ready to consume items — nothing yet produces them. |
+| 5 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
+| 6 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
+| 7 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
