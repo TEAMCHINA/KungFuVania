@@ -186,6 +186,10 @@ float armorPenetration                // 0.0–1.0, default 0 — fraction of ta
 
 float blockDamagePercent              // default 0.5 — damage dealt through block
 bool  isUnblockable                   // bypasses block entirely, full damage, guard break
+bool  hitsFriendlies                  // default false — attack can damage same-team entities
+                                      // EnemyHitbox ↔ EnemyHurtbox is always enabled in the physics
+                                      // layer matrix; HurtboxController drops same-team contacts
+                                      // silently when false. Set true on AOE/sweep attacks.
 bool  piercesDodgeIFrames             // default false — i-frames don't protect; dodge movement still occurs
                                       // also prevents perfect dodge from triggering
 
@@ -930,6 +934,9 @@ Implemented as a strong directional pull — no pendulum physics, no new locomot
 
 ```csharp
 float     maxGrappleRange
+float     grappleAimToleranceDegrees  // cone half-angle for magnetize (e.g. 35°) — candidates
+                                      // outside this cone from movement/aim direction are ignored;
+                                      // nearest within cone is chosen
 LayerMask grapplePointLayer
 float     launchImpulse          // strength of the pull toward the anchor point
 float     releaseRedirectStrength // optional velocity nudge on release based on approach angle
@@ -937,7 +944,11 @@ float     releaseRedirectStrength // optional velocity nudge on release based on
 
 On `OnGrapple` input:
 ```
-1. Raycast/overlap for nearest active GrapplePoint within maxGrappleRange
+1. Physics2D.OverlapCircle(playerPosition, maxGrappleRange, grapplePointLayer)
+     → collect all active GrapplePoints within range
+     → filter to those within grappleAimToleranceDegrees of player movement/aim direction
+     → select nearest among remaining candidates (magnetize — no precise aim required)
+     → if none found → no grapple fires
 2. If found → ApplyImpulse(directionToPoint * launchImpulse)
               player flies toward anchor through normal JUMP/FALL states
 3. On reaching anchor (proximity check) or second OnGrapple press
@@ -953,6 +964,9 @@ launch rather than a pendulum swing — fast, directional, releases cleanly into
 ```csharp
 bool isActive    // can be toggled (e.g. a boss destroys anchor rings as a phase attack)
 ```
+
+The future grapple attack upgrade (using the line as a weapon) is handled entirely in the
+existing hitbox/damage pipeline — `GrapplePoint` layer never participates in combat collisions.
 
 ---
 
@@ -1162,8 +1176,8 @@ Actor (root)
 ├── Hitbox_Primary     — BoxCollider2D (trigger), starts disabled, Physics layer: [Actor]Hitbox
 ├── Hitbox_Secondary   — BoxCollider2D (trigger), starts disabled, Physics layer: [Actor]Hitbox
 ├── Hurtbox_Body       — BoxCollider2D (trigger), always active,   Physics layer: [Actor]Hurtbox  ← primary body collider
-│   ├── Hurtbox_Head   — BoxCollider2D (trigger), optional child,  Physics layer: [Actor]HurtboxZone
-│   └── Hurtbox_Block  — BoxCollider2D (trigger), optional child,  Physics layer: [Actor]HurtboxZone
+│   ├── Hurtbox_Head   — BoxCollider2D (trigger), optional child,  Physics layer: [Actor]Hurtbox
+│   └── Hurtbox_Block  — BoxCollider2D (trigger), optional child,  Physics layer: [Actor]Hurtbox
 ├── Hurtbox_Pierce     — BoxCollider2D (trigger), NEVER disabled,  Physics layer: [Actor]HurtboxPierce
 └── HitboxEventRelay   — MonoBehaviour, receives animation events, routes to HitboxController
 ```
@@ -1309,6 +1323,11 @@ void SetInvulnerable(bool active):
 the actor root) and passes `combatProvider.CurrentCombatState` into `DamageCalculator.Resolve` at
 resolution time. `PlayerStateMachine` and `EnemyStateMachine` implement `ICombatStateProvider`.
 
+Same-team contacts are filtered before `DamageCalculator.Resolve` is called: if the attacker and
+target share the same team tag and `hitboxData.hitsFriendlies = false`, the contact is silently
+dropped. This is the only code-side gate for friendly fire — the `EnemyHitbox ↔ EnemyHurtbox`
+physics pair is always enabled in the layer matrix.
+
 Each zone child GameObject carries a lightweight `HurtboxZoneForwarder` component that
 captures `OnTriggerEnter2D` and routes it to `HurtboxController.OnZoneHit(zoneType, other)`.
 This is necessary because Unity fires trigger callbacks on the Rigidbody2D owner's scripts,
@@ -1425,6 +1444,72 @@ List<AuraSO> headHitAuras              // e.g. StunAuraSO; default empty
 Block resolution requires no per-attack configuration beyond `blockDamagePercent` and
 `isUnblockable`, which are already on `HitboxDataSO`. Every attack interacts with the block
 zone correctly automatically — the attack data has no knowledge of whether the target has a shield.
+
+---
+
+### 3o. Physics Layer Matrix
+
+#### Layer Definitions
+
+13 custom layers. Unity allows 32 total (0–7 reserved); this leaves 11 slots open for future
+systems (projectiles, environmental hazards, etc.).
+
+| Layer | Collider type | Used by |
+|---|---|---|
+| `PlayerMovement` | Non-trigger | Player movement/platforming collider |
+| `EnemyMovement` | Non-trigger | Enemy movement/navigation collider |
+| `Environment` | Non-trigger | Static world geometry — floors, walls, platforms |
+| `Interactable` | Trigger | Room transitions, ability gates, item pickups, NPC volumes |
+| `GrapplePoint` | Trigger | Anchor ring GameObjects — overlap/raycast target only, no collision pairs |
+| `PlayerHitbox` | Trigger | Player primary and secondary attack hitboxes |
+| `PlayerHitboxPierce` | Trigger | Player pierce-flagged hitboxes (`piercesDodgeIFrames = true`) |
+| `EnemyHitbox` | Trigger | Enemy and boss attack hitboxes |
+| `EnemyHitboxPierce` | Trigger | Enemy pierce-flagged hitboxes |
+| `PlayerHurtbox` | Trigger | `Hurtbox_Body`, `Hurtbox_Head`, `Hurtbox_Block` — routing by collider identity |
+| `PlayerHurtboxPierce` | Trigger | `Hurtbox_Pierce` sentinel — never disabled by `SetInvulnerable` |
+| `EnemyHurtbox` | Trigger | `Hurtbox_Body`, `Hurtbox_Head`, `Hurtbox_Block` — routing by collider identity |
+| `EnemyHurtboxPierce` | Trigger | `Hurtbox_Pierce` sentinel — never disabled |
+
+#### Collision Matrix — Enabled Pairs
+
+All unlisted pairs are **disabled**. Only 8 pairs are active.
+
+| Layer A | Layer B | Purpose |
+|---|---|---|
+| `PlayerMovement` | `Environment` | Platforming and wall detection |
+| `EnemyMovement` | `Environment` | Enemy navigation against world geometry |
+| `PlayerMovement` | `Interactable` | Room exits, ability gates, item pickups, NPC triggers |
+| `PlayerHitbox` | `EnemyHurtbox` | Player attacks resolve against enemies |
+| `PlayerHitboxPierce` | `EnemyHurtboxPierce` | Player pierce attacks against enemy pierce sentinel |
+| `EnemyHitbox` | `PlayerHurtbox` | Enemy attacks resolve against player |
+| `EnemyHitbox` | `EnemyHurtbox` | Friendly fire — enabled at physics level, gated by `hitsFriendlies` in code |
+| `EnemyHitboxPierce` | `PlayerHurtboxPierce` | Enemy pierce attacks bypass player i-frames |
+
+#### Design Notes
+
+**Self-hit prevention** is enforced at the physics level: `PlayerHitbox` never collides with
+`PlayerHurtbox`. No code check required.
+
+**Friendly fire** is enabled at the physics level (`EnemyHitbox ↔ EnemyHurtbox`) and gated
+per-attack in code via `hitsFriendlies` on `HitboxDataSO`. Boss AOE/sweep attacks set
+`hitsFriendlies = true`; standard attacks leave it false and the contact is silently dropped
+by `HurtboxController` before reaching `DamageCalculator`.
+
+**Exclusive pierce path**: `EnemyHitboxPierce` collides only with `PlayerHurtboxPierce` — not
+with `PlayerHurtbox`. Pierce attacks route exclusively through the always-active `Hurtbox_Pierce`
+sentinel. A regular and a pierce attack against the same player can never double-resolve.
+
+**Zone merge**: `Hurtbox_Head` and `Hurtbox_Block` share the `[Actor]Hurtbox` layer with
+`Hurtbox_Body`. Distinguishing body vs zone contact is handled entirely by `HurtboxZoneForwarder`
+reading the collider reference — physics layer plays no role in routing.
+
+**GrapplePoint** has no collision pairs. `GrappleAbility` uses `Physics2D.OverlapCircle` with
+the `GrapplePoint` layer mask to find candidates, then selects the nearest within the aim
+tolerance cone. The grapple attack upgrade routes through the existing hitbox/damage pipeline —
+`GrapplePoint` layer never participates in combat collisions.
+
+**PlayerMovement / EnemyMovement** do not collide with each other. Enemy spacing relative to
+the player is managed by AI behavior, not physics.
 
 ---
 
@@ -1864,12 +1949,11 @@ earlier entries block more downstream work.
 
 | Priority | System | Why it's missing / what's needed |
 |---|---|---|
-| 1 | **Physics layer matrix** | Which Unity physics layers exist and which collide with which (player hitbox → enemy hurtbox, environment, projectiles, etc.). Short section but must be decided before any collider is placed. Blocks the hitbox pipeline. |
-| 2 | **Enemy AI** | State machine *states* are defined but no behavior logic exists: detection (vision cone? radius? LOS?), attack decision-making beyond "weighted random," aggression/spacing model, ranged vs. melee differences, boss AI phase navigation. Blocks any enemy implementation. |
-| 3 | **`EquipmentSO` definition** | `EquipmentManager`, `AbilityModifierSO`, and the loot system all reference `EquipmentSO` but its fields are never defined. Needs: equipment slot types (weapon, armor, accessory), stat contribution fields, modifier list, display data. Blocks all equipment/loot work. |
-| 4 | **Death & respawn flow** | Completely absent. What happens when HP reaches 0: death animation, which respawn point is selected, what state is restored (health, position, auras, enemy state), whether there is a death penalty. Needed before the health system or player controller can be considered complete. |
-| 5 | **Save system detail** | `WorldStateManager` mentions JSON serialization but the flow is vague: what triggers a save (room transition? checkpoint activation? manual?), checkpoint placement rules, save slot management, and how death-respawn integrates with the save state. Closely related to #4 but a separate design concern. |
-| 6 | **Loot & item drops** | Drop tables (enemy-specific? room-specific? global pool?), item pickup interaction, and a minimal inventory/equipment slot UI. The `AbilityModifierSO` pipeline is ready to consume items — nothing yet produces them. |
-| 7 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
-| 8 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
-| 9 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
+| 1 | **Enemy AI** | State machine *states* are defined but no behavior logic exists: detection (vision cone? radius? LOS?), attack decision-making beyond "weighted random," aggression/spacing model, ranged vs. melee differences, boss AI phase navigation. Blocks any enemy implementation. |
+| 2 | **`EquipmentSO` definition** | `EquipmentManager`, `AbilityModifierSO`, and the loot system all reference `EquipmentSO` but its fields are never defined. Needs: equipment slot types (weapon, armor, accessory), stat contribution fields, modifier list, display data. Blocks all equipment/loot work. |
+| 3 | **Death & respawn flow** | Completely absent. What happens when HP reaches 0: death animation, which respawn point is selected, what state is restored (health, position, auras, enemy state), whether there is a death penalty. Needed before the health system or player controller can be considered complete. |
+| 4 | **Save system detail** | `WorldStateManager` mentions JSON serialization but the flow is vague: what triggers a save (room transition? checkpoint activation? manual?), checkpoint placement rules, save slot management, and how death-respawn integrates with the save state. Closely related to #3 but a separate design concern. |
+| 5 | **Loot & item drops** | Drop tables (enemy-specific? room-specific? global pool?), item pickup interaction, and a minimal inventory/equipment slot UI. The `AbilityModifierSO` pipeline is ready to consume items — nothing yet produces them. |
+| 6 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
+| 7 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
+| 8 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
