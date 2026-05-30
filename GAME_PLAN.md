@@ -87,7 +87,12 @@ moving or jumping without combinatorial state explosion.
 ```
 IDLE → WALK → RUN → JUMP → FALL → WALL_SLIDE → CROUCH → BLOCKING → HURT
                                                                    → DOWN → DOWN_RECOVERY
+                                                                   → PLAYER_DEATH  (terminal — no exit except respawn)
 ```
+
+`PLAYER_DEATH` is entered when `StatSheet.CurrentHealth` reaches 0. It is the only locomotion
+state that cannot be interrupted by any input. Exit only occurs via `RespawnManager` after the
+full cinematic death sequence completes.
 
 `BLOCKING` is a held locomotion state entered when the defensive button is held and no parry
 triggered on the initial press (see Combat System). Player can move slowly while blocking
@@ -198,6 +203,12 @@ LayerMask visionBlockers                // layers that block LOS (typically: Env
 
 // Patrol / Search
 float   searchDuration                  // seconds to scan at last known position before deaggro
+
+// Permanence
+bool    isUnique                // default false — if true, death is written to worldFlags
+                                // (permanent kill, survives respawn). Set on bosses and named elites.
+                                // Regular enemies (isUnique = false) are recorded in RoomState.deadEnemies
+                                // which WorldStateManager.ResetEnemies() clears on player respawn.
 
 // Loot (placeholder — detailed when LootTable system is designed)
 // LootTableSO lootTable
@@ -1941,6 +1952,199 @@ the existing design in Section 3j.
 
 ---
 
+### 3q. Death & Respawn System
+
+#### Overview
+
+Death and respawn is orchestrated across five components, each owning a clear slice of the flow:
+
+| Component | Responsibility |
+|---|---|
+| `PlayerDeathTrigger` | Detects HP = 0, enters `PLAYER_DEATH` state, fires `OnPlayerDeath` |
+| `CinematicDeathDirector` | Drives slow-mo / vignette / zoom / fade-to-black sequence |
+| `DeathScreenUI` | Presents death screen and retry options to the player |
+| `RespawnManager` | Owns state restoration and scene/position transition on respawn |
+| `CheckpointController` | Physical shrine — activation, save trigger, respawn point registration |
+
+---
+
+#### PlayerDeathTrigger
+
+MonoBehaviour on the player root. Subscribes to `OnEntityDamaged` via EventBus. After each
+damage event, checks `StatSheet.CurrentHealth`:
+
+```
+StatSheet.CurrentHealth <= 0 AND NOT already in PLAYER_DEATH:
+  → player locomotion state machine → PLAYER_DEATH
+  → EventBus.Publish(OnPlayerDeath { killer, deathPosition, diedInBossRoom })
+```
+
+`PLAYER_DEATH` suppresses all input. The animator plays the death entry animation (brief
+stagger/reel into collapse). The state is held until `RespawnManager.Respawn()` forces a
+position reset or scene load.
+
+---
+
+#### CinematicDeathDirector
+
+Singleton MonoBehaviour. Subscribes to `OnPlayerDeath`. Drives the full visual sequence using
+`Time.unscaledDeltaTime` throughout so all timing survives `timeScale` changes:
+
+**Step 1 — Slow-mo + isolation vignette** (simultaneous):
+- Set `Time.timeScale = deathSlowMoScale` (e.g. 0.15).
+- Spawn a full-screen black sprite quad in world space at sorting layer "Cinematic", order 500.
+  Animate its alpha 0 → `vignetteDarkness` (e.g. 0.88) over `vignetteRampTime` real seconds.
+- Promote player SpriteRenderer(s) and killer SpriteRenderer(s) to sorting order 600+. This
+  keeps them visually isolated against the darkened world using only sorting order — no shader
+  or camera stack needed. Original sorting orders are restored after respawn.
+
+**Step 2 — Camera zoom** (simultaneous with Step 1):
+- Activate a `DeathVirtualCamera` (Cinemachine) that has a tighter orthographic size than the
+  gameplay camera, focused on the player. Cinemachine blends smoothly in.
+
+**Step 3 — Hold for collapse animation**:
+- Wait `collapseHoldDuration` real seconds — long enough for the death animation to play
+  through at slow-mo speed.
+
+**Step 4 — Freeze frame**:
+- Set `Time.timeScale = 0`. Hold for `freezeFrameDuration` real seconds.
+
+**Step 5 — Fade to black**:
+- Restore `Time.timeScale = 1`. Animate vignette alpha → 1.0 (full black) over `fadeToBlackDuration`.
+
+**Step 6 — Trigger death screen**:
+- `EventBus.Publish(OnDeathSequenceComplete { diedInBossRoom })`
+
+All timing fields live on `CinematicDeathDirectorSO` (assigned in scene) for designer tuning:
+
+```csharp
+float deathSlowMoScale       // e.g. 0.15
+float vignetteDarkness       // 0–1, e.g. 0.88
+float vignetteRampTime       // real seconds, e.g. 0.3
+float collapseHoldDuration   // real seconds, e.g. 1.8
+float freezeFrameDuration    // real seconds, e.g. 0.4
+float fadeToBlackDuration    // real seconds, e.g. 0.6
+```
+
+---
+
+#### DeathScreenUI
+
+Canvas UI component. Subscribes to `OnDeathSequenceComplete`. On receipt:
+- Fades in over ~0.3s real time.
+- Shows a configurable death message (e.g. "You have fallen").
+- Always shows: **"Continue"** → `RespawnManager.Respawn(retryBoss: false)`.
+- Conditionally shows: **"Retry Boss"** (only if `diedInBossRoom = true`)
+  → `RespawnManager.Respawn(retryBoss: true)`.
+
+"Retry Boss" teleports directly to `RoomDataSO.bossEntranceSpawnPoint` of the boss room
+without changing the saved checkpoint.
+
+---
+
+#### RespawnManager
+
+Singleton MonoBehaviour. Owns `Respawn(bool retryBoss)`:
+
+```
+1. Restore player stats
+     StatSheet.CurrentHealth  = StatSheet.MaxHealth
+     StatSheet.CurrentChiPool = StatSheet.MaxChiPool
+
+2. Clear active auras
+     AuraManager.ClearAll()     // new method — strips all timed buffs/debuffs from player
+
+3. Reset non-permanent enemies
+     WorldStateManager.ResetEnemies()
+     // clears deadEnemies in all RoomState entries
+     // does NOT touch worldFlags — boss kills and isUnique enemy kills are permanent
+
+4. Determine respawn target
+     IF retryBoss:
+       room = WorldStateManager.PlayerPersistentData.lastBossRoomAtDeath
+       pos  = RoomDataSO(room).bossEntranceSpawnPoint
+     ELSE:
+       room = WorldStateManager.PlayerPersistentData.lastCheckpointRoomId
+       pos  = WorldStateManager.PlayerPersistentData.lastCheckpointPos
+
+5. Load room if different from current (Addressables / SceneManager); else skip
+
+6. Reposition player → pos
+   Deactivate DeathVirtualCamera → gameplay camera resumes
+   Restore player SpriteRenderer sorting orders
+   Clear lastBossRoomAtDeath from PlayerPersistentData
+
+7. Fade from black → gameplay view
+
+8. EventBus.Publish(OnPlayerRespawn { respawnPosition })
+```
+
+`AuraManager.ClearAll()` is a new method. It is the inverse of the existing
+`AuraManager.ApplyAll()` and is only called here.
+
+---
+
+#### CheckpointController
+
+MonoBehaviour on each physical shrine/incense-burner in the scene.
+
+```csharp
+string     checkpointId      // unique identifier, set in Inspector
+bool       isActive          // runtime — true = this is the current respawn point
+GameObject activationVFX
+AudioClip  activationSFX     // played via FMOD
+```
+
+Player enters the trigger zone and presses the interact button (InputReader). If `isActive`,
+do nothing. Otherwise:
+
+```
+1. EventBus.Publish(OnCheckpointDeactivated { previousId })
+   → other CheckpointControllers hear this and set isActive = false / switch to idle visual
+2. isActive = true → switch to active visual + play VFX/SFX
+3. Write to WorldStateManager.PlayerPersistentData:
+     lastCheckpointId     = checkpointId
+     lastCheckpointPos    = transform.position
+     lastCheckpointRoomId = current scene name
+4. WorldStateManager.Save()
+5. EventBus.Publish(OnCheckpointActivated { checkpointId })
+```
+
+Checkpoint activation does NOT restore HP or chi — healing is the reward for dying and
+returning, not for touching the shrine. On scene load, each `CheckpointController` reads
+`WorldStateManager.PlayerPersistentData.lastCheckpointId`; if it matches, set `isActive =
+true` and apply the active visual silently (no VFX/SFX replay).
+
+---
+
+#### New EventBus Events
+
+```csharp
+OnPlayerDeath {
+    GameObject killer          // entity that landed the killing blow; null if environmental
+    Vector2    deathPosition
+    bool       diedInBossRoom  // true if current RoomDataSO.isBossRoom
+}
+
+OnDeathSequenceComplete {
+    bool diedInBossRoom        // forwarded from OnPlayerDeath for DeathScreenUI
+}
+
+OnPlayerRespawn {
+    Vector2 respawnPosition
+}
+
+OnCheckpointActivated {
+    string checkpointId
+}
+
+OnCheckpointDeactivated {
+    string checkpointId
+}
+```
+
+---
+
 ## 4. Metroidvania Map / Scene Management
 
 ### Scene Structure
@@ -1955,6 +2159,21 @@ Naming convention:
   Room_Zone01_Temple_A
   Boss_Zone01_TigerSensei
   Cinematic_Boss_TigerSensei_Kill
+```
+
+#### RoomDataSO
+
+ScriptableObject. One asset per room scene, referenced by the minimap system and `RespawnManager`.
+
+```csharp
+string   roomId                     // matches scene name exactly
+string   displayName                // shown on minimap hover (e.g. "Temple Entrance")
+Polygon  minimapPolygon             // shape drawn on minimap (fog of war)
+
+// Respawn / boss support
+bool     isBossRoom                 // if true, DeathScreenUI shows "Retry Boss" button on player death
+Vector2  bossEntranceSpawnPoint     // world position used by RespawnManager on "Retry Boss"
+                                    // set to the spawn point just inside the boss room door
 ```
 
 ### Room Transitions
@@ -1975,12 +2194,43 @@ music crossfade flag.
 ```csharp
 Dictionary<string, RoomState>   // dead enemies, pickups, open doors per room
 HashSet<string>                 // unlockedAbilities
-Dictionary<string, bool>        // worldFlags
-PlayerPersistentData            // health, position, current room
+Dictionary<string, bool>        // worldFlags — permanent flags (boss kills, story beats)
+PlayerPersistentData            // health, position, current room, checkpoint
 ```
 
-Serialized to JSON via `Newtonsoft.Json` on: room transition, boss death, respawn point
-activation.
+**`PlayerPersistentData` fields:**
+
+```csharp
+// Existing
+float   currentHealth
+float   currentChiPool
+Vector2 position
+string  currentRoomId
+
+// Checkpoint / respawn
+string  lastCheckpointId        // id of the last activated CheckpointController
+string  lastCheckpointRoomId    // scene name of the checkpoint's room
+Vector2 lastCheckpointPos       // world position of the checkpoint
+
+// Boss retry support
+string  lastBossRoomAtDeath     // scene name if player died in a boss room; null otherwise
+                                // written by PlayerDeathTrigger on death, cleared on respawn
+```
+
+**`WorldStateManager.ResetEnemies()`** — called by `RespawnManager` on respawn:
+
+```
+for each room in RoomState.Values:
+    room.deadEnemies.Clear()    // regular enemy kills forgotten — enemies respawn
+// worldFlags are NOT touched — boss kills and isUnique enemy kills are permanent
+```
+
+Regular enemy deaths are recorded in `RoomState.deadEnemies` (a `HashSet<string>` of enemy
+instance IDs). Unique enemies (`EnemyDataSO.isUnique = true`) write their death to
+`worldFlags[$"enemy_{enemyId}_defeated"]` instead — `ResetEnemies()` never clears worldFlags.
+
+Serialized to JSON via `Newtonsoft.Json` on: room transition, boss death, `CheckpointController`
+activation. ("Respawn point activation" in earlier notes maps to `CheckpointController` activation.)
 
 On room load, `WorldStateManager` broadcasts `OnRoomStateRestored` and individual room
 objects self-configure via their own EventBus listeners.
@@ -2390,9 +2640,8 @@ earlier entries block more downstream work.
 
 | Priority | System | Why it's missing / what's needed |
 |---|---|---|
-| 1 | **Death & respawn flow** | Completely absent. What happens when HP reaches 0: death animation, which respawn point is selected, what state is restored (health, position, auras, enemy state), whether there is a death penalty. Needed before the health system or player controller can be considered complete. |
-| 2 | **Save system detail** | `WorldStateManager` mentions JSON serialization but the flow is vague: what triggers a save (room transition? checkpoint activation? manual?), checkpoint placement rules, save slot management, and how death-respawn integrates with the save state. Closely related to #1 but a separate design concern. |
-| 3 | **Loot & item drops** | Drop tables (enemy-specific? room-specific? global pool?), item pickup interaction, and a minimal inventory/equipment slot UI. `ItemTemplateSO`, `LegendaryItemSO`, and `ItemGenerator` are defined — nothing yet drives when and what drops. |
-| 4 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
-| 5 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
-| 6 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
+| 1 | **Save system detail** | Save triggers are now defined (checkpoint activation, room transition, boss death) but the broader save system is vague: save slot management (1 slot vs. multiple), what happens when no checkpoint has ever been activated (first spawn), and whether there is a "new game" vs. "continue" flow on the main menu. |
+| 2 | **Loot & item drops** | Drop tables (enemy-specific? room-specific? global pool?), item pickup interaction, and a minimal inventory/equipment slot UI. `ItemTemplateSO`, `LegendaryItemSO`, and `ItemGenerator` are defined — nothing yet drives when and what drops. |
+| 3 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
+| 4 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
+| 5 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
