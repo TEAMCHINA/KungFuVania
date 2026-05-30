@@ -940,7 +940,7 @@ int level
 // Equipment overlay (player only — aggregated from all equipped items by EquipmentManager)
 // Enemies leave this zeroed out; their WeaponDamage and Armor are set directly as native stats
 StatBonus equipmentBonuses     // additive on top of base stats
-                               // contains: weaponDamage, armor, detectionRangeMultiplier
+                               // see StatBonus struct below
 
 // Derived (computed properties — never set directly, always calculated from raw stats)
 float MaxHealth                  // => f(constitution, level)
@@ -954,6 +954,34 @@ float DetectionRangeMultiplier       // from equipmentBonuses; default 1.0; stea
                                      // read by enemy AI detection to scale visionRange + alarmRadius
 // coefficients are configurable on a StatConfigSO, not hardcoded
 ```
+
+#### StatBonus
+
+Aggregated by `EquipmentManager` from all equipped items. Cleared and rebuilt on every equip/unequip.
+`detectionRangeMultiplier` is multiplicative (1.0 = no change); all other fields are additive.
+
+```csharp
+struct StatBonus {
+    // Existing fields
+    int   weaponDamage               // flat bonus to WeaponDamage
+    int   armor                      // flat bonus to Armor
+    float detectionRangeMultiplier   // multiplicative; 1.0 = no change, 0.5 = half detection range
+
+    // Equipment-derived bonuses
+    int   maxHealth          // flat bonus added on top of constitution-derived MaxHealth
+    int   maxChiPool         // flat bonus added on top of chi-derived MaxChiPool
+    int   strength           // adds to base primary stat; flows through all derived formulas
+    int   chi
+    int   dexterity
+    int   constitution
+    float movementSpeedBonus // additive bonus to MovementSpeedMultiplier (separate from DEX scaling)
+    float attackSpeedBonus   // additive bonus to AttackSpeedMultiplier (separate from DEX scaling)
+}
+```
+
+`MaxHealth` and `MaxChiPool` read `equipmentBonuses.maxHealth` / `equipmentBonuses.maxChiPool`
+as a flat addend after the primary stat formula. Primary stat properties (`Strength`, `Chi`, etc.)
+return `baseValue + equipmentBonuses.strength` (etc.) so all downstream formulas automatically benefit.
 
 `StatSheet` broadcasts `OnStatsChanged` via EventBus whenever any value changes, allowing
 health bars, chi bars, and UI to react without polling.
@@ -1696,6 +1724,223 @@ the player is managed by AI behavior, not physics.
 
 ---
 
+### 3p. Equipment System
+
+#### SlotType and Rarity
+
+```csharp
+enum SlotType { Weapon, Armor, Ring1, Ring2 }
+// Ring1 and Ring2 are interchangeable — any ring item fits either slot.
+// Adding new slot types (e.g. Head, Body, Legs) requires only: new enum values + UI slots.
+
+enum Rarity { Common, Magic, Rare, Legendary }
+// Common  (white) — 0 affixes, proc-gen, mostly low-level drops
+// Magic   (blue)  — 1 affix, proc-gen
+// Rare    (yellow)— 2–3 affixes, proc-gen, mostly high-level drops
+// Legendary       — authored; specific enemy farm targets + random drop tables (no affix rolling)
+// Drop probability by player level is configured in LootTableSO (see Priority 3 TODO).
+```
+
+---
+
+#### ItemTemplateSO
+
+ScriptableObject. One asset per base item type (e.g. "Iron Sword", "Silk Sash"). Defines the
+blueprint for proc-gen drops — legendaries use `LegendaryItemSO` instead.
+
+```csharp
+// Identity
+string       baseItemId       // unique key (e.g. "iron_sword")
+string       displayName      // e.g. "Iron Sword"
+Sprite       icon
+string       flavourText      // short lore line shown in tooltip
+
+// Slot & requirements
+SlotType     slotType
+int          minLevel         // player must be >= this level to equip
+
+// Base stats (always granted — applied before any affix contributions)
+StatBonus    baseStats
+
+// Base ability modifiers (always granted — authored, not rolled)
+// Stored as pairs so one template can modify multiple abilities
+List<(string abilityId, AbilityModifierSO modifier)> baseAbilityModifiers
+
+// Proc-gen affix pool (used for Magic and Rare drops from this template)
+// Common drops draw 0 affixes; Legendary items ignore this list entirely
+List<AffixSO> affixPool
+```
+
+---
+
+#### LegendaryItemSO
+
+ScriptableObject. One asset per unique named item. Referenced directly in targeted loot tables
+(specific enemy farm sources) and as entries in the random legendary drop pool.
+
+```csharp
+string       legendaryId       // unique key (e.g. "dragons_tooth")
+string       legendaryName     // unique item name shown to player
+string       flavourText       // longer lore text (legendaries get more flavour)
+Sprite       icon
+SlotType     slotType
+int          minLevel
+
+// Fully authored — no affix rolling
+StatBonus    stats
+List<(string abilityId, AbilityModifierSO modifier)> abilityModifiers
+```
+
+---
+
+#### AffixSO
+
+ScriptableObject. One asset per affix type (e.g. "Weapon Damage", "Max Health",
+"Flying Kick Bonus"). An affix is either a stat bonus or an ability modifier — not both.
+
+```csharp
+string   affixId
+string   displayTemplate     // e.g. "+{value} Weapon Damage" — {value} replaced in UI tooltip
+
+// Stat affix (set statType; leave abilityId + modifier null)
+AffixStatType statType       // enum: WeaponDamage, Armor, MaxHealth, MaxChiPool,
+                             //       Strength, Chi, Dexterity, Constitution,
+                             //       MovementSpeed, AttackSpeed, DetectionRange
+float    minValue
+float    maxValue
+float    levelScaleFactor    // final = lerp(min, max, t) + (itemLevel * levelScaleFactor)
+
+// Ability modifier affix (set abilityId + modifier; leave statType = None)
+string            abilityId  // which ability this affix modifies (null = stat affix)
+AbilityModifierSO modifier   // the modifier instance to contribute (null = stat affix)
+
+// Affix availability and weighting
+bool     availableOnMagic    // Common gets 0 affixes; eligibility starts at Magic
+bool     availableOnRare
+float    weight              // used for weighted random selection within the pool
+```
+
+---
+
+#### AffixInstance
+
+Plain C# class. Stored on `ItemData` for tooltip display — records exactly what was rolled.
+
+```csharp
+string  affixId
+float   rolledValue     // resolved value after lerp + level scaling; 0 for ability modifier affixes
+```
+
+---
+
+#### ItemData
+
+Plain C# class (not a ScriptableObject). Created at runtime by `ItemGenerator`. This is the
+type `EquipmentManager` works with — replaces all prior "EquipmentSO" placeholder references.
+
+```csharp
+// Template reference (for save serialization and re-identification)
+string       templateId         // references ItemTemplateSO.baseItemId or LegendaryItemSO.legendaryId
+bool         isLegendary
+
+// Display (copied from template at generation time)
+string       displayName
+Sprite       icon
+string       flavourText
+
+// Properties
+SlotType     slotType
+Rarity       rarity
+int          itemLevel          // player level at drop time — used for level scaling display
+int          minLevel           // copied from template; checked on equip attempt
+
+// Resolved stats (base stats + all affix contributions, computed once at generation time)
+StatBonus    stats
+
+// Resolved ability modifiers (base + affix-contributed, collected at generation time)
+List<(string abilityId, AbilityModifierSO modifier)> abilityModifiers
+
+// Affix display (for tooltip UI)
+List<AffixInstance> rolledAffixes     // empty for Common and Legendary items
+```
+
+---
+
+#### Item Generation Flow
+
+`ItemGenerator` is a static utility class called by the loot system when an item drops.
+
+```
+LootTableSO determines:
+  - rarity (weighted by player level — see Priority 3 TODO)
+  - which ItemTemplateSO (or LegendaryItemSO) to use
+
+ItemGenerator.Generate(template, rarity, playerLevel):
+
+  IF legendary:
+    → copy all fields from LegendaryItemSO directly into ItemData (no rolling)
+    → return ItemData
+
+  ELSE (Common / Magic / Rare):
+    1. Copy baseStats from ItemTemplateSO into ItemData.stats (mutable copy)
+       Copy baseAbilityModifiers into ItemData.abilityModifiers
+    2. Determine affix count:
+         Common → 0
+         Magic  → 1
+         Rare   → Random.Range(2, 4)   // 2 or 3
+    3. Filter affixPool by rarity eligibility (availableOnMagic / availableOnRare)
+    4. WeightedRandom selection without replacement for N affixes
+    5. For each selected AffixSO:
+         IF stat affix:
+           rolledValue = lerp(minValue, maxValue, Random.value) + (playerLevel * levelScaleFactor)
+           → add rolledValue to the matching field in ItemData.stats
+           → record AffixInstance(affixId, rolledValue) in rolledAffixes
+         IF ability modifier affix:
+           → add (abilityId, modifier) to ItemData.abilityModifiers
+           → record AffixInstance(affixId, 0) in rolledAffixes
+    6. Return ItemData
+```
+
+---
+
+#### EquipmentManager (updated field types)
+
+`EquipmentManager` was previously designed with a placeholder `EquipmentSO` type; all
+references update to `ItemData`. Logic and registry structure are unchanged.
+
+```csharp
+// Currently equipped items — one ItemData per slot
+Dictionary<SlotType, ItemData> equippedItems
+
+void Equip(ItemData item, SlotType slot)
+    // 1. Reject if item.minLevel > player.StatSheet.level
+    // 2. If slot occupied: UnregisterModifiers(equippedItems[slot])
+    // 3. equippedItems[slot] = item
+    // 4. RegisterModifiers(item)
+    // 5. StatSheet.RefreshEquipmentBonuses()
+
+void Unequip(SlotType slot)
+    // 1. UnregisterModifiers(equippedItems[slot])
+    // 2. equippedItems.Remove(slot)
+    // 3. StatSheet.RefreshEquipmentBonuses()
+
+void RegisterModifiers(ItemData item)
+    // iterates item.abilityModifiers; adds each to modifiersByAbilityId[abilityId]
+    // ChargeCountModifierSO contributions also added to chargeBonuses
+
+void UnregisterModifiers(ItemData item)
+    // removes item's contributions from modifiersByAbilityId and chargeBonuses
+```
+
+`StatSheet.RefreshEquipmentBonuses()` clears `equipmentBonuses`, iterates all `equippedItems`
+values, and accumulates each `item.stats` field-by-field. `detectionRangeMultiplier` multiplies
+rather than adds (start at 1.0, multiply each item's value in). All other fields are additive.
+
+`BuildContext`, `GetChargeBonus`, and the `modifiersByAbilityId` registry are unchanged from
+the existing design in Section 3j.
+
+---
+
 ## 4. Metroidvania Map / Scene Management
 
 ### Scene Structure
@@ -2145,10 +2390,9 @@ earlier entries block more downstream work.
 
 | Priority | System | Why it's missing / what's needed |
 |---|---|---|
-| 1 | **`EquipmentSO` definition** | `EquipmentManager`, `AbilityModifierSO`, and the loot system all reference `EquipmentSO` but its fields are never defined. Needs: equipment slot types (weapon, armor, accessory), stat contribution fields, modifier list, display data. Blocks all equipment/loot work. |
-| 2 | **Death & respawn flow** | Completely absent. What happens when HP reaches 0: death animation, which respawn point is selected, what state is restored (health, position, auras, enemy state), whether there is a death penalty. Needed before the health system or player controller can be considered complete. |
-| 3 | **Save system detail** | `WorldStateManager` mentions JSON serialization but the flow is vague: what triggers a save (room transition? checkpoint activation? manual?), checkpoint placement rules, save slot management, and how death-respawn integrates with the save state. Closely related to #2 but a separate design concern. |
-| 4 | **Loot & item drops** | Drop tables (enemy-specific? room-specific? global pool?), item pickup interaction, and a minimal inventory/equipment slot UI. The `AbilityModifierSO` pipeline is ready to consume items — nothing yet produces them. |
-| 5 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
-| 6 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
-| 7 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
+| 1 | **Death & respawn flow** | Completely absent. What happens when HP reaches 0: death animation, which respawn point is selected, what state is restored (health, position, auras, enemy state), whether there is a death penalty. Needed before the health system or player controller can be considered complete. |
+| 2 | **Save system detail** | `WorldStateManager` mentions JSON serialization but the flow is vague: what triggers a save (room transition? checkpoint activation? manual?), checkpoint placement rules, save slot management, and how death-respawn integrates with the save state. Closely related to #1 but a separate design concern. |
+| 3 | **Loot & item drops** | Drop tables (enemy-specific? room-specific? global pool?), item pickup interaction, and a minimal inventory/equipment slot UI. `ItemTemplateSO`, `LegendaryItemSO`, and `ItemGenerator` are defined — nothing yet drives when and what drops. |
+| 4 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
+| 5 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
+| 6 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
