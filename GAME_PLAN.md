@@ -2063,9 +2063,12 @@ Singleton MonoBehaviour. Owns `Respawn(bool retryBoss)`:
      IF retryBoss:
        room = WorldStateManager.PlayerPersistentData.lastBossRoomAtDeath
        pos  = RoomDataSO(room).bossEntranceSpawnPoint
-     ELSE:
+     ELSE IF lastCheckpointId != null:
        room = WorldStateManager.PlayerPersistentData.lastCheckpointRoomId
        pos  = WorldStateManager.PlayerPersistentData.lastCheckpointPos
+     ELSE (new game — no checkpoint activated yet):
+       room = GameStartSO.startRoomSceneName
+       pos  = GameStartSO.startSpawnPosition
 
 5. Load room if different from current (Addressables / SceneManager); else skip
 
@@ -2081,6 +2084,22 @@ Singleton MonoBehaviour. Owns `Respawn(bool retryBoss)`:
 
 `AuraManager.ClearAll()` is a new method. It is the inverse of the existing
 `AuraManager.ApplyAll()` and is only called here.
+
+---
+
+#### GameStartSO
+
+ScriptableObject. One asset in the project, assigned to `RespawnManager` in the Inspector.
+Defines the player's very first spawn point before any checkpoint has been activated.
+
+```csharp
+string  startRoomSceneName    // scene to load on new game (e.g. "Room_Zone01_Entrance")
+Vector2 startSpawnPosition    // world position of the player's initial spawn point
+```
+
+`RespawnManager` falls back to `GameStartSO` when `PlayerPersistentData.lastCheckpointId`
+is null. After the starting scene loads, `lastCheckpointId` remains null until the player
+activates a real checkpoint for the first time.
 
 ---
 
@@ -2234,6 +2253,168 @@ activation. ("Respawn point activation" in earlier notes maps to `CheckpointCont
 
 On room load, `WorldStateManager` broadcasts `OnRoomStateRestored` and individual room
 objects self-configure via their own EventBus listeners.
+
+---
+
+### Save System
+
+#### SaveData
+
+Plain serializable C# class. One instance per save slot. Serialized to/from JSON by `SaveManager`.
+
+```csharp
+// Meta (shown on main menu slot card)
+int      slotIndex
+string   saveVersion          // e.g. "1.0" — for future migration compatibility
+DateTime timestamp            // wall-clock time of last save
+float    playtimeSeconds      // cumulative in-gameplay time (excludes menus and loading screens)
+string   displayZoneName      // e.g. "Temple of the Tiger" — from RoomDataSO.displayName at save time
+
+// World state (mirrors WorldStateManager runtime fields)
+Dictionary<string, RoomState>   roomStates
+HashSet<string>                 unlockedAbilities
+Dictionary<string, bool>        worldFlags
+PlayerPersistentData            player
+
+// Input
+string   inputBindingsJson    // serialized control remapping (InputActionRebindingExtensions)
+
+// Cosmetics
+PlayerAppearanceData appearance
+```
+
+---
+
+#### SaveSlotMeta
+
+Lightweight struct for main menu display — read without deserializing the full `SaveData`:
+
+```csharp
+struct SaveSlotMeta {
+    bool     isEmpty
+    string   displayZoneName
+    float    playtimeSeconds      // formatted in UI as "12h 34m"
+    DateTime timestamp            // formatted as "Last played: May 30"
+}
+```
+
+---
+
+#### SaveManager
+
+Singleton (ServiceLocator-resolved). Owns all file I/O. `WorldStateManager` never writes
+files directly — it delegates through `SaveManager`.
+
+**File layout** (`Application.persistentDataPath/saves/`):
+```
+slot_0.json    slot_1.json    slot_2.json
+slot_0.bak     slot_1.bak     slot_2.bak
+```
+
+**`Save(int slotIndex, SaveData data)`:**
+```
+1. If slot_N.json exists → copy to slot_N.bak  (rotate backup before overwriting)
+2. Serialize data to JSON (Newtonsoft.Json, pretty-print off)
+3. Write atomically: serialize → slot_N.tmp → rename to slot_N.json
+   (prevents partial file if game crashes mid-write)
+4. EventBus.Publish(OnSaveCompleted { slotIndex })
+```
+
+**`Load(int slotIndex) → SaveData?`:**
+```
+1. Try to deserialize slot_N.json
+     success → return SaveData
+2. On failure → try slot_N.bak
+     success → copy slot_N.bak to slot_N.json (restore backup as primary)
+              → show notice: "A previous save was restored for Slot N"
+              → return SaveData
+3. Both fail → show error: "Save data for Slot N could not be read and has been reset"
+             → return null  (caller treats slot as empty)
+```
+
+**`ClearSlot(int slotIndex)`** — deletes slot_N.json and slot_N.bak if they exist.
+
+**`ReadMeta(int slotIndex) → SaveSlotMeta`** — parses only meta fields; returns
+`SaveSlotMeta { isEmpty = true }` if file is absent or unparseable.
+
+---
+
+#### WorldStateManager — Save/Load Integration
+
+`WorldStateManager` gains two new fields:
+
+```csharp
+int    activeSlotIndex      // slot currently in use; -1 while on the main menu
+float  sessionStartTime     // Time.realtimeSinceStartup captured at session start, for playtime
+```
+
+**`WorldStateManager.Save()`** (updated — delegates to SaveManager):
+```
+1. Build SaveData from current runtime state:
+     playtimeSeconds += (Time.realtimeSinceStartup - sessionStartTime)
+     sessionStartTime  = Time.realtimeSinceStartup   // reset session clock
+     displayZoneName   = current RoomDataSO.displayName
+2. SaveManager.Save(activeSlotIndex, saveData)
+```
+
+**`WorldStateManager.LoadSlot(int slotIndex)`** (new — called by main menu on Continue):
+```
+1. data = SaveManager.Load(slotIndex)
+2. If data == null: return (caller handles empty-slot UI)
+3. Populate all WorldStateManager runtime fields from data
+4. activeSlotIndex    = slotIndex
+5. sessionStartTime   = Time.realtimeSinceStartup
+```
+
+**`WorldStateManager.NewGame(int slotIndex)`** (new — called by main menu on New Game):
+```
+1. SaveManager.ClearSlot(slotIndex)
+2. Reset all WorldStateManager runtime fields to defaults
+3. Initialize PlayerPersistentData from GameStartSO (lastCheckpointId = null)
+4. activeSlotIndex    = slotIndex
+5. sessionStartTime   = Time.realtimeSinceStartup
+6. playtimeSeconds    = 0
+```
+
+---
+
+#### Save Triggers (complete list)
+
+| Trigger | Where it fires |
+|---|---|
+| Checkpoint activation | `CheckpointController` → `WorldStateManager.Save()` |
+| Room transition | Room transition flow → `WorldStateManager.Save()` |
+| Boss death | Boss phase system → `WorldStateManager.Save()` |
+| Application quit | `Application.quitting` hook on `WorldStateManager` |
+| Pause → Return to Main Menu | Pause menu "Return to Menu" button |
+
+---
+
+#### Main Menu — SaveSlotUI
+
+One screen with three `SaveSlotCard` components. Each card reads `SaveManager.ReadMeta(slotIndex)`
+on menu open.
+
+**Empty card:** "Empty" label. Click → `WorldStateManager.NewGame(slotIndex)` → load start room.
+
+**Occupied card:** shows `displayZoneName`, playtime ("12h 34m"), timestamp ("Last played: May 30").
+- Primary click → `WorldStateManager.LoadSlot(slotIndex)` → load saved room.
+- Secondary "New Game" affordance → confirmation dialog "This will permanently erase Slot N.
+  Continue?" → Yes → `WorldStateManager.NewGame(slotIndex)`.
+
+No separate "New Game" / "Load Game" buttons — both flows are handled contextually by the cards.
+
+---
+
+#### New EventBus Event
+
+```csharp
+OnSaveCompleted {
+    int slotIndex
+}
+```
+
+---
 
 ### Ability Gates
 
@@ -2411,6 +2592,7 @@ Phase              int   0–3        set on boss phase change / room entry
 | Minimap | Data-driven from `RoomDataSO` polygons, fog of war, current room pulses |
 | Combo counter | Brushstroke font, white → gold → red color tiers, fades 2s after last hit |
 | Ability icons | Cooldown clock fill when unavailable, unlock slide-in animation |
+| Save indicator | Small ink-stamp icon, corner of screen; fades in/out briefly on `OnSaveCompleted` |
 
 ### Screen Effects
 
@@ -2640,8 +2822,7 @@ earlier entries block more downstream work.
 
 | Priority | System | Why it's missing / what's needed |
 |---|---|---|
-| 1 | **Save system detail** | Save triggers are now defined (checkpoint activation, room transition, boss death) but the broader save system is vague: save slot management (1 slot vs. multiple), what happens when no checkpoint has ever been activated (first spawn), and whether there is a "new game" vs. "continue" flow on the main menu. |
-| 2 | **Loot & item drops** | Drop tables (enemy-specific? room-specific? global pool?), item pickup interaction, and a minimal inventory/equipment slot UI. `ItemTemplateSO`, `LegendaryItemSO`, and `ItemGenerator` are defined — nothing yet drives when and what drops. |
-| 3 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
-| 4 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
-| 5 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
+| 1 | **Loot & item drops** | Drop tables (enemy-specific? room-specific? global pool?), item pickup interaction, and a minimal inventory/equipment slot UI. `ItemTemplateSO`, `LegendaryItemSO`, and `ItemGenerator` are defined — nothing yet drives when and what drops. |
+| 2 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
+| 3 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
+| 4 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
