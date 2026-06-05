@@ -214,6 +214,10 @@ bool    isUnique                // default false — if true, death is written t
 LootTableSO lootTable   // this enemy's drop table; null = use GameConfigSO.globalLootTable fallback
 int         goldMin     // minimum gold dropped on death (0 = no gold drop)
 int         goldMax     // maximum gold dropped on death
+
+// Progression
+int  xpReward           // XP awarded to the player on this enemy's death
+                        // bosses have a high value set directly here — no separate boss-XP system
 ```
 
 Only shield enemies, elites, and bosses set `canBlock = true`. Enemies where `canBlock = false`
@@ -999,6 +1003,20 @@ return `baseValue + equipmentBonuses.strength` (etc.) so all downstream formulas
 `StatSheet` broadcasts `OnStatsChanged` via EventBus whenever any value changes, allowing
 health bars, chi bars, and UI to react without polling.
 
+> The primary stat fields (`strength`, `chi`, `dexterity`, `constitution`, `level`) on
+> `StatSheet` are runtime values. They are initialized from `PlayerPersistentData` on game
+> load and written back before every save. Equipment overlays (`equipmentBonuses`) are
+> re-derived from `EquipmentManager` on load — they are never stored directly in the save file.
+
+```csharp
+void IncrementStat(PrimaryStatType stat, int points)
+    // Adds `points` to the specified base stat field.
+    // Calls RefreshEquipmentBonuses() to re-derive all dependent values.
+    // Only called by the stat allocation UI — never by any other system.
+
+enum PrimaryStatType { Strength, Chi, Dexterity, Constitution }
+```
+
 ---
 
 ### 3j. Ability Execution Pipeline
@@ -1365,6 +1383,13 @@ float downDuration          // total time on the floor before forced DOWN_RECOVE
 float techWindowStart       // earliest frame a tech input is accepted (prevents mashing out instantly)
 float techWindowEnd         // last frame a tech is accepted (= downDuration; missed = full recovery)
 float downRecoveryDuration  // get-up animation length (tech = shortened version)
+
+// On PlayerDataSO only — starting progression (used by WorldStateManager.NewGame())
+int  startLevel         // e.g. 1
+int  startStrength      // e.g. 5
+int  startChi           // e.g. 5
+int  startDexterity     // e.g. 5
+int  startConstitution  // e.g. 5
 ```
 
 The attack's `knockbackVector` determines slide distance and direction while downed —
@@ -2440,6 +2465,175 @@ OnGoldChanged { int newTotal }           // gold picked up or spent
 
 ---
 
+### 3s. XP & Level System
+
+All XP and level state lives in `ExperienceManager`. Primary stats grow by spending banked
+stat points from the pause menu — the game never pauses on level-up. Abilities are unlocked
+through exploration/story (`WorldStateManager.unlockedAbilities`) — level only affects stats
+and the `LevelScale` damage scalar.
+
+#### LevelConfigSO
+
+ScriptableObject. One asset in the project, referenced by `ExperienceManager`.
+
+```csharp
+int   baseXPThreshold      // XP required to reach level 2 (e.g. 100)
+float xpGrowthRate         // multiplier applied each level (e.g. 1.4)
+                           // XP to reach level N = baseXPThreshold * xpGrowthRate^(N-2)
+                           // cumulative XP for level N = sum of thresholds for all prior levels
+int   statPointsPerLevel   // always 1; exposed here so designers can experiment during balance
+int   hideBarAboveLevel    // hide XP bar when level threshold grows impractically large
+```
+
+Example thresholds with `baseXPThreshold = 100, xpGrowthRate = 1.4`:
+
+| Level | XP to reach this level | Cumulative XP |
+|---|---|---|
+| 2 | 100 | 100 |
+| 3 | 140 | 240 |
+| 4 | 196 | 436 |
+| 5 | 274 | 710 |
+| 10 | ~1,035 | ~4,500 |
+| 20 | ~5,560 | ~28,000 |
+
+No hard cap — thresholds keep growing. Effective progression plateaus around level 25–30
+in a normal playthrough, which aligns with the loot rarity breakpoints (1–10, 11–20, 21+).
+
+---
+
+#### ExperienceManager
+
+Singleton component. Central authority for all XP and level state.
+
+```csharp
+int   CurrentLevel         // read from PlayerPersistentData on init
+int   CurrentXP            // cumulative XP earned (never decremented)
+int   UnspentStatPoints    // banked points not yet allocated
+```
+
+```csharp
+void AwardXP(int amount):
+    CurrentXP += amount
+    EventBus.Publish(OnXPGained { amount, newTotal: CurrentXP, progressToNext: float })
+
+    while CurrentXP >= XPThresholdForLevel(CurrentLevel + 1):
+        CurrentLevel++
+        UnspentStatPoints += LevelConfigSO.statPointsPerLevel
+        StatSheet.level = CurrentLevel    // kept in sync immediately each iteration
+        EventBus.Publish(OnLevelUp { newLevel: CurrentLevel, unspentPoints: UnspentStatPoints })
+        // loop handles multiple level-ups from a single large XP award (boss kill)
+
+int XPThresholdForLevel(int level):
+    // Returns cumulative XP needed to reach `level`
+    // = sum of (baseXPThreshold * xpGrowthRate^i) for i in 0..(level-2)
+    // Computed from LevelConfigSO at runtime — not a lookup table
+
+void SpendStatPoint(PrimaryStatType stat):
+    if UnspentStatPoints <= 0: return
+    UnspentStatPoints--
+    StatSheet.IncrementStat(stat, 1)
+    EventBus.Publish(OnStatPointSpent { stat, newStatValue, unspentRemaining })
+```
+
+`ExperienceManager` syncs to/from `PlayerPersistentData` on every save and load:
+```
+Save:  write CurrentLevel, CurrentXP, UnspentStatPoints, and StatSheet base stat values
+Load:  read those fields back and apply to StatSheet
+```
+
+---
+
+#### XP Award Triggers
+
+**Enemy death:**
+```
+Enemy enters DEATH state
+  → ExperienceManager.AwardXP(EnemyDataSO.xpReward)
+```
+Boss enemies have a high `xpReward` set in their `EnemyDataSO` — no separate boss-XP system
+is needed. Bosses that are `isUnique = true` also write to `worldFlags` on death, which
+prevents their XP from being re-awarded if the game re-runs their death sequence somehow.
+
+**Quest / story beats:**
+```
+NPC dialogue / quest completion event
+  → ExperienceManager.AwardXP(questXPAmount)
+```
+The NPC/dialogue system (Priority 2 TODO) calls `AwardXP`. To prevent double-awarding, the
+caller checks `WorldStateManager.worldFlags[$"xp_quest_{questId}_awarded"]` before calling,
+then sets that flag after.
+
+---
+
+#### Stat Allocation — Pause Menu Stats Screen
+
+New panel in the pause menu (alongside Equipment/Bag). Accessible any time — points may be
+spent immediately on level-up or saved for later.
+
+**Layout:**
+- Header: "Level N — N Unspent Points"
+- Four stat rows: Strength / Chi / Dexterity / Constitution
+- Each row shows: stat name, current base value, a "+" button (enabled only if `unspentStatPoints > 0`)
+- Pressing "+" calls `ExperienceManager.SpendStatPoint(stat)` — applies immediately, no confirm step
+- Each row also shows the downstream effect in muted text:
+  - Strength: "→ affects physical damage"
+  - Chi: "→ affects chi damage + max chi pool"
+  - Dexterity: "→ affects attack speed + movement speed"
+  - Constitution: "→ affects max health"
+- XP bar at the bottom of the panel: current XP / XP needed for next level
+
+Points are spent one at a time. There is no undo — once a point is spent it is committed.
+The player can close the screen and return later to spend remaining banked points.
+
+---
+
+#### Level-Up HUD Notification
+
+Small component on `ScreenSpaceCanvas`. Subscribes to `OnLevelUp`.
+
+On receipt:
+- A banner slides in from the right edge of the screen (ink-brush brushstroke swipe aesthetic).
+- Displays: "LEVEL UP  →  Lv. N"
+- Holds for ~2.5s, then slides back out.
+- If multiple level-ups occur in quick succession (large XP reward), banners queue and display
+  sequentially. Does NOT pause gameplay.
+- If `unspentPoints > 0`, a small secondary line reads "Stat point available" to remind the
+  player to open the stats screen.
+
+---
+
+#### XP Bar — HUD
+
+A thin bar (below the health bar) showing current XP progress toward the next level.
+Updates on `OnXPGained` — shows a brief flash fill animation on each award.
+On level-up: fills completely, briefly flashes, then resets to show progress toward the next level.
+Hidden above `LevelConfigSO.hideBarAboveLevel` (when thresholds grow impractically large).
+
+---
+
+#### New EventBus Events (XP & Level)
+
+```csharp
+OnXPGained {
+    int   amount            // XP awarded this event
+    int   newTotal          // cumulative XP after award
+    float progressToNext    // 0.0–1.0 — fraction toward next level threshold
+}
+
+OnLevelUp {
+    int newLevel
+    int unspentPoints       // total banked points after this level-up
+}
+
+OnStatPointSpent {
+    PrimaryStatType stat
+    int             newStatValue
+    int             unspentRemaining
+}
+```
+
+---
+
 ## 4. Metroidvania Map / Scene Management
 
 ### Scene Structure
@@ -2537,6 +2731,17 @@ int gold                        // current gold; never reset on death or respawn
 // Inventory (JSON-safe form — reconstructed into ItemData at load time via ItemDataSerializer)
 List<SerializableItemData>              bag            // up to inventoryCapacity items
 Dictionary<SlotType, SerializableItemData> equippedItems  // one entry per slot; absent = empty slot
+
+// Progression
+int level               // current player level
+int currentXP           // cumulative XP earned (never resets)
+int unspentStatPoints   // banked points waiting to be allocated in the stats screen
+
+// Base primary stats (equipment overlay is separate — this is the level-up-growable base)
+int statStrength
+int statChi
+int statDexterity
+int statConstitution
 ```
 
 **`WorldStateManager.ResetEnemies()`** — called by `RespawnManager` on respawn:
@@ -2896,6 +3101,8 @@ Phase              int   0–3        set on boss phase change / room entry
 | Combo counter | Brushstroke font, white → gold → red color tiers, fades 2s after last hit |
 | Ability icons | Cooldown clock fill when unavailable, unlock slide-in animation |
 | Save indicator | Small ink-stamp icon, corner of screen; fades in/out briefly on `OnSaveCompleted` |
+| XP bar | Thin bar below health; fills on `OnXPGained`, resets on level-up; hidden near soft cap |
+| Level display | Small "Lv. N" label near health bar; updates on `OnLevelUp` |
 
 ### Screen Effects
 
@@ -3125,6 +3332,5 @@ earlier entries block more downstream work.
 
 | Priority | System | Why it's missing / what's needed |
 |---|---|---|
-| 1 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
-| 2 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
-| 3 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
+| 1 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
+| 2 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
