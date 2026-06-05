@@ -210,8 +210,10 @@ bool    isUnique                // default false — if true, death is written t
                                 // Regular enemies (isUnique = false) are recorded in RoomState.deadEnemies
                                 // which WorldStateManager.ResetEnemies() clears on player respawn.
 
-// Loot (placeholder — detailed when LootTable system is designed)
-// LootTableSO lootTable
+// Loot
+LootTableSO lootTable   // this enemy's drop table; null = use GameConfigSO.globalLootTable fallback
+int         goldMin     // minimum gold dropped on death (0 = no gold drop)
+int         goldMax     // maximum gold dropped on death
 ```
 
 Only shield enemies, elites, and bosses set `canBlock = true`. Enemies where `canBlock = false`
@@ -2164,6 +2166,280 @@ OnCheckpointDeactivated {
 
 ---
 
+### 3r. Loot & Item Drops
+
+#### LootTableSO
+
+ScriptableObject. One asset per enemy type, chest type, or breakable type. A single global
+fallback asset is referenced by `GameConfigSO.globalLootTable`.
+
+```csharp
+List<LootEntry> entries
+
+float dropChance      // 0.0–1.0 — probability that any item drops at all
+                      // e.g. 0.25 for common grunts, 1.0 for bosses and chests
+int   minDrops        // minimum items to drop if dropChance roll succeeds (usually 0 or 1)
+int   maxDrops        // maximum items to drop (usually 1–2; bosses may drop more)
+```
+
+```csharp
+struct LootEntry {
+    // Exactly one of these is set:
+    ItemTemplateSO  template         // proc-gen item (Common / Magic / Rare)
+    LegendaryItemSO legendary        // authored unique item (forces Legendary rarity)
+
+    float  weight                    // relative probability weight within this table
+    Rarity rarityOverride            // if not None, overrides the level-based rarity roll
+                                     // use on chests / boss drops to guarantee Rare or higher
+}
+```
+
+**Global fallback**: `GameConfigSO.globalLootTable` — used when `EnemyDataSO.lootTable` is
+null. Holds broad Common/Magic entries across all slot types as a content baseline.
+
+Rarity probability by player level (configurable as `AnimationCurve` weights on `GameConfigSO`):
+
+| Player level | Common | Magic | Rare | Legendary |
+|---|---|---|---|---|
+| 1–10 | 70% | 25% | 5% | entry must have a `LegendaryItemSO` |
+| 11–20 | 40% | 40% | 20% | same |
+| 21+ | 15% | 45% | 40% | same |
+
+A level-based roll never produces a Legendary from a template entry — Legendaries only drop
+from `LootEntry` rows that explicitly set a `LegendaryItemSO`.
+
+---
+
+#### LootResolver
+
+Static utility class. Called by every drop source.
+
+```
+LootResolver.Resolve(LootTableSO table, Vector2 spawnPos, int playerLevel, int goldMin, int goldMax):
+
+  1. Roll dropChance → if fails, return (no drop)
+  2. itemCount = Random.Range(minDrops, maxDrops + 1)
+  3. For each item to drop:
+       a. WeightedRandom(table.entries) → LootEntry
+       b. Rarity:
+            entry.rarityOverride != None → use it
+            else → roll weighted by playerLevel (table above)
+       c. ItemGenerator.Generate(entry.template or entry.legendary, rarity, playerLevel) → ItemData
+       d. Spawn ItemPickup at spawnPos + small random offset (avoids stacking)
+          → register in WorldStateManager.RoomState[currentRoom].pendingPickups
+  4. goldAmount = Random.Range(goldMin, goldMax + 1)
+     if goldAmount > 0: spawn GoldPickup at spawnPos
+```
+
+---
+
+#### Drop Sources
+
+**Enemy death:**
+```
+Enemy enters DEATH state
+  → LootResolver.Resolve(lootTable ?? GlobalLootTable, deathPos, playerLevel, goldMin, goldMax)
+```
+
+**Chest / container — `ChestController`:**
+```csharp
+string         chestId
+LootTableSO    chestLootTable
+int            goldAmount       // flat; actual amount = Random.Range(0, goldAmount + 1)
+bool           isOpen           // restored from RoomState.openedChests on scene load
+```
+On interact:
+```
+1. If isOpen → do nothing
+2. isOpen = true; RoomState.openedChests.Add(chestId)
+3. Play open animation + VFX
+4. LootResolver.Resolve(chestLootTable, pos, playerLevel, 0, goldAmount)
+```
+
+**Boss guaranteed drop:**
+On DEATH / CINEMATIC_KILL state:
+```
+LootResolver.Resolve(BossPhaseDataSO.bossLootTable, bossPos, playerLevel, goldMin, goldMax)
+```
+Boss entries should use `rarityOverride = Rare` or include a `LegendaryItemSO` entry.
+`bossLootTable` is a new field added to `BossPhaseDataSO` (or `EnemyDataSO` for bosses).
+
+**Breakable environment objects — `BreakableObject`:**
+```csharp
+string      breakableId
+LootTableSO breakableLootTable   // null = breaks but drops nothing
+bool        isBroken             // restored from RoomState.brokenObjects on scene load
+```
+On destruction (hit by attack, or environmental trigger):
+```
+1. isBroken = true; RoomState.brokenObjects.Add(breakableId)
+2. Play break VFX
+3. if breakableLootTable != null:
+     LootResolver.Resolve(breakableLootTable, pos, playerLevel, 0, 0)
+```
+Breakables use low `dropChance` (e.g. 0.10) and only Common/Magic entries.
+
+---
+
+#### ItemPickup
+
+MonoBehaviour spawned by `LootResolver`. Uses the `Interactable` physics layer (collides with
+`PlayerMovement`).
+
+```csharp
+string         pickupId          // assigned at spawn; used for RoomState.pendingPickups key
+ItemData       item
+SpriteRenderer iconRenderer
+SpriteRenderer glowRenderer      // rarity-tinted glow outline
+TMP_Text       nameLabel         // shown only when player is in range
+```
+
+Rarity glow colors: Common = none, Magic = blue, Rare = yellow, Legendary = orange (pulsing).
+
+**Player enters trigger zone**: show `nameLabel` (name + rarity color) + InputReader interact hint.
+
+**Player presses interact**:
+```
+1. PlayerInventory.TryAdd(item):
+     true  → RoomState.pendingPickups.Remove(pickupId)
+              RoomState.collectedPickups.Add(pickupId)
+              Destroy(gameObject)
+     false → EventBus.Publish(OnInventoryFull) — HUD flashes "Inventory Full"
+              ItemPickup stays in world
+```
+
+**Persistence across room re-entry**: `pendingPickups` in `RoomState` stores the item
+snapshot + position. On scene load, `WorldStateManager` re-spawns each entry as an
+`ItemPickup` at its stored position, restoring the `pickupId` so future collection is
+correctly tracked.
+
+---
+
+#### GoldPickup
+
+MonoBehaviour. Auto-pickup on contact with `PlayerMovement` (no interact button needed).
+
+```csharp
+int goldAmount
+```
+
+```
+PlayerPersistentData.gold += goldAmount
+EventBus.Publish(OnGoldChanged { newTotal: int })
+Destroy(gameObject)
+```
+
+Gold is ephemeral — not tracked in `RoomState`. If the player leaves the room before
+collecting a gold drop it is lost (gold drops are low-value and numerous; persistence
+would add noise to RoomState with minimal benefit).
+
+---
+
+#### PlayerInventory
+
+Component on the player root. Reconstructs runtime `List<ItemData>` from `PlayerPersistentData.bag`
+(the serialized form) on load.
+
+```csharp
+int            inventoryCapacity    // default 20; set on PlayerDataSO
+List<ItemData> bag                  // runtime — deserialized from PlayerPersistentData on load
+```
+
+```csharp
+bool TryAdd(ItemData item):
+    if bag.Count >= inventoryCapacity → return false
+    bag.Add(item)
+    EventBus.Publish(OnInventoryChanged)
+    return true
+
+void Drop(ItemData item, Vector2 position):
+    bag.Remove(item)
+    LootResolver.SpawnPickup(item, position)   // spawns ItemPickup at position
+    EventBus.Publish(OnInventoryChanged)
+
+void EquipFromBag(ItemData item, SlotType slot):
+    ItemData displaced = EquipmentManager.equippedItems.GetValueOrDefault(slot)
+    EquipmentManager.Equip(item, slot)         // also calls StatSheet.RefreshEquipmentBonuses
+    bag.Remove(item)
+    if displaced != null:
+        if !TryAdd(displaced): Drop(displaced, playerFeetPosition)  // bag full — drop at feet
+    EventBus.Publish(OnInventoryChanged)
+```
+
+On save: `PlayerInventory.bag` is converted to `PlayerPersistentData.bag` (List<SerializableItemData>)
+via `ItemDataSerializer.Serialize()` per item. On load: the inverse via `Deserialize()`.
+
+---
+
+#### Inventory & Equipment UI
+
+Opens via the pause menu.
+
+**Equipment panel (left side):**
+- Four named slots: Weapon, Armor, Ring 1, Ring 2
+- Each shows the equipped item's icon + rarity glow, or an empty placeholder
+- Selecting an occupied slot while no bag item is highlighted → tooltip + "Unequip" option
+  → `EquipmentManager.Unequip(slot)` + `PlayerInventory.TryAdd(displaced)`
+- Selecting an occupied slot while a compatible bag item is highlighted → equip the bag item
+
+**Bag grid panel (right side):**
+- 4×5 grid (20 slots)
+- Each occupied slot shows item icon + rarity-colored border
+- Selecting an item shows a tooltip: name, rarity, stats block, rolled affix list,
+  flavour text, minLevel requirement
+- Comparison overlay: the currently equipped item in the matching slot shows ▲/▼ per stat
+  field (e.g. ▲ +12 Weapon Damage, ▼ −5 Armor)
+- "Equip" → `PlayerInventory.EquipFromBag(item, item.slotType)`
+- "Drop" → `PlayerInventory.Drop(item, playerFeetPosition)`
+
+---
+
+#### ItemDataSerializer
+
+Static utility. Bridges runtime `ItemData` ↔ JSON-safe `SerializableItemData`.
+
+```csharp
+class SerializableItemData {
+    string   templateId         // ItemTemplateSO.baseItemId or LegendaryItemSO.legendaryId
+    bool     isLegendary
+    SlotType slotType
+    Rarity   rarity
+    int      itemLevel
+    List<SerializableAffixInstance> rolledAffixes
+}
+
+struct SerializableAffixInstance {
+    string affixId
+    float  rolledValue          // the already-rolled value — never re-rolled on load
+}
+```
+
+**`Serialize(ItemData) → SerializableItemData`**: copy fields; discard Unity object refs
+(`Sprite`, `AbilityModifierSO`) — these are re-derived from templates at load time.
+
+**`Deserialize(SerializableItemData, IItemTemplateRegistry) → ItemData`**:
+1. Look up template by `templateId` in registry
+2. If legendary: copy all fields from `LegendaryItemSO` (no rolling — authored values)
+3. If proc-gen: start from `template.baseStats` + `baseAbilityModifiers`, then re-apply each
+   saved affix (look up `AffixSO` by `affixId`, apply saved `rolledValue` — no re-roll)
+4. Reconstruct full `ItemData` with display data from template
+
+`IItemTemplateRegistry` — implemented by a ScriptableObject holding
+`List<ItemTemplateSO>` and `List<LegendaryItemSO>`, the project-wide source of truth for
+all authored item assets.
+
+---
+
+#### New EventBus Events (Loot)
+
+```csharp
+OnInventoryChanged { }                   // bag or equipment changed — UI refreshes
+OnInventoryFull { }                      // pickup attempted when bag at capacity
+OnGoldChanged { int newTotal }           // gold picked up or spent
+```
+
+---
+
 ## 4. Metroidvania Map / Scene Management
 
 ### Scene Structure
@@ -2211,10 +2487,30 @@ music crossfade flag.
 `WorldStateManager` persists across loads, maintains:
 
 ```csharp
-Dictionary<string, RoomState>   // dead enemies, pickups, open doors per room
+Dictionary<string, RoomState>   // per-room persistent state (see RoomState below)
 HashSet<string>                 // unlockedAbilities
 Dictionary<string, bool>        // worldFlags — permanent flags (boss kills, story beats)
-PlayerPersistentData            // health, position, current room, checkpoint
+PlayerPersistentData            // health, position, current room, checkpoint, inventory, gold
+```
+
+**`RoomState` fields:**
+
+```csharp
+class RoomState {
+    HashSet<string> deadEnemies       // instance IDs of killed non-unique enemies (cleared on respawn)
+    HashSet<string> collectedPickups  // pickup instance IDs already collected (never re-spawned)
+    HashSet<string> openedChests      // chest IDs already opened
+    HashSet<string> brokenObjects     // breakable object IDs already destroyed
+    HashSet<string> openedDoors       // ability-gate / door IDs that have been opened
+
+    // Pickups spawned in this room but not yet collected — re-spawned on room re-entry
+    Dictionary<string, PendingPickup> pendingPickups   // pickupId → (item, position)
+}
+
+struct PendingPickup {
+    SerializableItemData item       // JSON-safe item snapshot (see Section 3r)
+    Vector2              position
+}
 ```
 
 **`PlayerPersistentData` fields:**
@@ -2234,6 +2530,13 @@ Vector2 lastCheckpointPos       // world position of the checkpoint
 // Boss retry support
 string  lastBossRoomAtDeath     // scene name if player died in a boss room; null otherwise
                                 // written by PlayerDeathTrigger on death, cleared on respawn
+
+// Currency
+int gold                        // current gold; never reset on death or respawn
+
+// Inventory (JSON-safe form — reconstructed into ItemData at load time via ItemDataSerializer)
+List<SerializableItemData>              bag            // up to inventoryCapacity items
+Dictionary<SlotType, SerializableItemData> equippedItems  // one entry per slot; absent = empty slot
 ```
 
 **`WorldStateManager.ResetEnemies()`** — called by `RespawnManager` on respawn:
@@ -2822,7 +3125,6 @@ earlier entries block more downstream work.
 
 | Priority | System | Why it's missing / what's needed |
 |---|---|---|
-| 1 | **Loot & item drops** | Drop tables (enemy-specific? room-specific? global pool?), item pickup interaction, and a minimal inventory/equipment slot UI. `ItemTemplateSO`, `LegendaryItemSO`, and `ItemGenerator` are defined — nothing yet drives when and what drops. |
-| 2 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
-| 3 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
-| 4 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
+| 1 | **Level up / XP system** | `LevelScale` exists in the damage formula and stats reference `level`, but there is no XP gain, level-up event, stat growth on level-up, or player-facing progression loop. |
+| 2 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
+| 3 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
