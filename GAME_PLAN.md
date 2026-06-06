@@ -19,9 +19,9 @@ Timeline for cutscene sequencing, and a mature 2D physics pipeline for hitbox/hu
 Assets/
 ├── _Project/
 │   ├── Scripts/
-│   │   ├── Core/           GameManager, EventBus, SceneLoader, ServiceLocator
+│   │   ├── Core/           GameManager, EventBus, SceneLoader, ServiceLocator, CameraManager
 │   │   ├── Player/         PlayerController, PlayerStateMachine, PlayerCombat, PlayerAbilities, PlayerStats,
-│   │   │                   AnimatorSpeedSync
+│   │   │                   AnimatorSpeedSync, CameraTarget
 │   │   ├── Combat/         HitboxController, HurtboxController, ComboSystem, ParrySystem,
 │   │   │                   DodgeSystem, DamageCalculator, StaggerMeter, InputBuffer,
 │   │   │                   MotionInputBuffer, MotionInputDetector
@@ -48,6 +48,7 @@ Assets/
 │   │       ├── Combos/
 │   │       ├── Rooms/
 │   │       ├── Stats/              StatConfigSO (dexterity coefficients, level scaling curve, etc.)
+│   │       ├── Camera/             CameraConfigSO
 │   │       └── ParrySettings/
 │   └── Art/, Audio/, Prefabs/, Animations/
 ```
@@ -2559,7 +2560,7 @@ prevents their XP from being re-awarded if the game re-runs their death sequence
 NPC dialogue / quest completion event
   → ExperienceManager.AwardXP(questXPAmount)
 ```
-The NPC/dialogue system (Priority 2 TODO) calls `AwardXP`. To prevent double-awarding, the
+The NPC/dialogue system (Priority 1 TODO) calls `AwardXP`. To prevent double-awarding, the
 caller checks `WorldStateManager.worldFlags[$"xp_quest_{questId}_awarded"]` before calling,
 then sets that flag after.
 
@@ -2634,6 +2635,169 @@ OnStatPointSpent {
 
 ---
 
+### 3t. Camera System
+
+The gameplay camera uses Cinemachine with three virtual cameras (VCs) on the persistent Core
+scene. Priority determines which VC is active — higher priority wins. The gameplay VC follows
+a `CameraTarget` proxy (not the player directly), which implements lazy vertical tracking.
+
+#### CameraConfigSO
+
+ScriptableObject. One asset, referenced by `CameraManager`.
+
+```csharp
+// Gameplay follow
+float lookaheadTime             // seconds ahead the camera predicts (e.g. 0.5)
+float lookaheadSmoothing        // damping on the lookahead prediction (e.g. 10)
+float horizontalDamping         // Cinemachine x-axis damping (e.g. 0.2)
+float verticalDamping           // Cinemachine y-axis damping when snapping to new tier (e.g. 0.5)
+
+// Lazy vertical
+float verticalSnapThreshold     // min Y delta (world units) to trigger a camera Y snap (e.g. 2.0)
+float verticalSnapDuration      // seconds to lerp CameraTarget.y to new tier (e.g. 0.25)
+
+// Orthographic sizes
+float defaultOrthoSize          // normal gameplay ortho size (e.g. 6.0)
+float bossOrthoSizeMin          // minimum ortho size during boss camera — group framing won't
+                                // shrink below this even if player and boss are close (e.g. 7.0)
+
+// Shake
+float defaultShakeForce         // baseline impulse force for a standard hit reaction (e.g. 0.3)
+```
+
+---
+
+#### CameraTarget
+
+`MonoBehaviour` on a dedicated child of the player root. Cinemachine follows this transform,
+not the player directly — decoupled so physics corrections on the player root don't cause
+camera jitter.
+
+```
+Player (root)
+└── CameraTarget   ← Cinemachine follow + look-at target for all gameplay VCs
+```
+
+```csharp
+// Every Update():
+transform.position.x = player.position.x    // X always mirrors player
+
+// OnPlayerLanded (subscribe to EventBus):
+float deltaY = player.position.y - transform.position.y
+if Mathf.Abs(deltaY) > CameraConfigSO.verticalSnapThreshold:
+    StartCoroutine(LerpY(player.position.y, CameraConfigSO.verticalSnapDuration))
+// Normal jump arcs don't exceed threshold — Y stays put during a hop
+
+void SnapToPlayer():
+    // Called by CameraManager on room transition (under the wipe)
+    StopAllCoroutines()
+    transform.position = player.position
+```
+
+`OnPlayerLanded` is published by the Locomotion state machine when transitioning from
+`FALL` → `IDLE` / `WALK` / `RUN` / `CROUCH` (any grounded state).
+
+---
+
+#### Virtual Camera Setup
+
+| VC | Priority | Follow target | Notes |
+|---|---|---|---|
+| `GameplayVC` | 10 | `CameraTarget` | Default; lookahead via Cinemachine FramingTransposer |
+| `BossVC` | 20 | `CinemachineTargetGroup` | Active during boss fights; auto-zooms to frame both |
+| `DeathVC` | 30 | player root | Defined in Section 3q; zoom + tilt on death sequence |
+
+**GameplayVC:**
+- Body: `CinemachinePositionComposer` — `LookaheadTime` = `CameraConfigSO.lookaheadTime`,
+  `LookaheadSmoothing` = `CameraConfigSO.lookaheadSmoothing`; horizontal and vertical damping
+  from config
+- Extension: `CinemachineConfiner2D` — `BoundingShape2D` updated by `CameraManager` on room load
+
+**BossVC:**
+- Follow: `CinemachineTargetGroup` containing player (weight 1.0, radius 1.5) + boss (weight
+  1.0, radius set from `BossController.CameraRadius` — boss-specific, authored in Inspector)
+- Body: `CinemachinePositionComposer` with auto-framing; orthographic size floor =
+  `CameraConfigSO.bossOrthoSizeMin` (prevents excessive zoom-out when boss is compact)
+- Extension: same `CinemachineConfiner2D` — boss camera still constrained to room bounds
+- No lookahead on BossVC (group framing handles the combined movement prediction)
+
+---
+
+#### CameraManager
+
+Singleton `MonoBehaviour` on the Core scene. Owns all VC and group references.
+
+```csharp
+// Subscriptions (wired in OnEnable):
+OnRoomConfinementReady   → UpdateConfiner(Collider2D bounds)
+OnRoomTransitionComplete → cameraTarget.SnapToPlayer()
+OnBossFightStarted       → StartBossFight(BossController boss)
+OnBossFightEnded         → EndBossFight()
+OnCameraShakeRequested   → impulseSource.GenerateImpulse(force * direction)
+
+void UpdateConfiner(Collider2D bounds):
+    confiner.BoundingShape2D = bounds
+    confiner.InvalidateCache()   // required by Cinemachine after shape change
+
+void StartBossFight(BossController boss):
+    bossTargetGroup.AddMember(boss.transform, weight: 1f, radius: boss.CameraRadius)
+    bossVC.Priority = 20         // BossVC activates, blends over GameplayVC
+
+void EndBossFight():
+    bossTargetGroup.RemoveMember(boss.transform)
+    bossVC.Priority = 0          // GameplayVC resumes
+```
+
+---
+
+#### Camera Shake
+
+A `CinemachineImpulseSource` component on the Core camera GameObject. `CameraManager`
+subscribes to `OnCameraShakeRequested` and calls `impulseSource.GenerateImpulse()`.
+
+Each hit category uses a different authored `CinemachineImpulseDefinition` asset for distinct
+feel (heavy attack = long, low-frequency rumble; parry snap = short, sharp spike).
+
+```csharp
+OnCameraShakeRequested {
+    float   force       // scale relative to CameraConfigSO.defaultShakeForce
+    Vector3 direction   // world-space direction of the impulse
+}
+```
+
+**Publishers:**
+- `HurtboxController` — on any damaging hit; force proportional to damage dealt
+- `ParrySystem` — on perfect parry; short sharp impulse
+- `DodgeSystem` — on perfect dodge bullet-time exit
+
+---
+
+#### New EventBus Events (Camera)
+
+```csharp
+OnRoomConfinementReady {
+    Collider2D bounds       // published by RoomCameraConfiner.Awake()
+}
+
+OnBossFightStarted {
+    BossController boss     // CameraManager adds boss.transform to target group
+}
+
+OnBossFightEnded { }
+
+OnCameraShakeRequested {
+    float   force
+    Vector3 direction
+}
+
+OnPlayerLanded { }          // published by Locomotion SM on FALL → grounded transition
+                            // CameraTarget evaluates lazy vertical snap on receipt
+```
+
+(`OnRoomTransitionComplete` is already defined in Section 4 room transitions.)
+
+---
+
 ## 4. Metroidvania Map / Scene Management
 
 ### Scene Structure
@@ -2664,6 +2828,12 @@ bool     isBossRoom                 // if true, DeathScreenUI shows "Retry Boss"
 Vector2  bossEntranceSpawnPoint     // world position used by RespawnManager on "Retry Boss"
                                     // set to the spawn point just inside the boss room door
 ```
+
+Each room scene contains a `RoomCameraConfiner` MonoBehaviour with a `PolygonCollider2D`
+matching the playable camera bounds (typically the same shape as `minimapPolygon` but in
+world space). On `Awake`, it publishes `OnRoomConfinementReady { Collider2D }`. `CameraManager`
+subscribes and updates `CinemachineConfiner2D.BoundingShape2D` so the camera cannot show
+outside the current room's walls.
 
 ### Room Transitions
 
@@ -3332,5 +3502,4 @@ earlier entries block more downstream work.
 
 | Priority | System | Why it's missing / what's needed |
 |---|---|---|
-| 1 | **Camera system** | Cinemachine is planned for combat effects (impulse shake, bullet time zoom, boss cinematics) but the *gameplay* camera is never designed: room-based confinement, player follow behavior (lookahead? deadzone?), camera transition between rooms, and lock-on framing during boss fights. |
-| 2 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. Lowest priority — doesn't block combat or movement. |
+| 1 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. |
