@@ -19,7 +19,8 @@ Timeline for cutscene sequencing, and a mature 2D physics pipeline for hitbox/hu
 Assets/
 ├── _Project/
 │   ├── Scripts/
-│   │   ├── Core/           GameManager, EventBus, SceneLoader, ServiceLocator, CameraManager
+│   │   ├── Core/           GameManager, EventBus, SceneLoader, ServiceLocator, CameraManager,
+│   │   │                   DialogueManager, ShopManager
 │   │   ├── Player/         PlayerController, PlayerStateMachine, PlayerCombat, PlayerAbilities, PlayerStats,
 │   │   │                   AnimatorSpeedSync, CameraTarget
 │   │   ├── Combat/         HitboxController, HurtboxController, ComboSystem, ParrySystem,
@@ -30,6 +31,7 @@ Assets/
 │   │   ├── Abilities/      AbilityBase, AbilityExecutionContext, AbilityModifierSO, EquipmentManager
 │   │   ├── MovementAbilities/ DoubleJumpAbility, AirDashAbility, GrappleAbility
 │   │   ├── Cosmetics/      CharacterCustomizationController, CosmeticRegistry
+│   │   ├── NPCs/           NPCController
 │   │   ├── Enemies/        EnemyAIBase, EnemyStateMachine, Bosses/, Variants/
 │   │   ├── World/          RoomManager, RoomTransition, WorldStateManager, AbilityGate, GrapplePoint
 │   │   ├── Cinematics/     CinematicDirector, LetterboxController
@@ -49,6 +51,8 @@ Assets/
 │   │       ├── Rooms/
 │   │       ├── Stats/              StatConfigSO (dexterity coefficients, level scaling curve, etc.)
 │   │       ├── Camera/             CameraConfigSO
+│   │       ├── Dialogue/           NPCDataSO assets, DialogueSO assets
+│   │       ├── Shop/               ShopInventorySO assets
 │   │       └── ParrySettings/
 │   └── Art/, Audio/, Prefabs/, Animations/
 ```
@@ -1391,6 +1395,10 @@ int  startStrength      // e.g. 5
 int  startChi           // e.g. 5
 int  startDexterity     // e.g. 5
 int  startConstitution  // e.g. 5
+
+// On PlayerDataSO only — dialogue
+Sprite defaultPlayerPortrait    // fallback portrait used in dialogue panel when the active
+                                // CosmeticOptionSO has no portraitSprite authored
 ```
 
 The attack's `knockbackVector` determines slide distance and direction while downed —
@@ -2798,6 +2806,261 @@ OnPlayerLanded { }          // published by Locomotion SM on FALL → grounded t
 
 ---
 
+### 3u. NPC / Dialogue System
+
+NPCs deliver lore, teach abilities, and open merchant shops. All dialogue is data-driven via
+ScriptableObjects. The game pauses behind a modal two-sided portrait panel; most dialogue is
+linear but choice nodes handle key branching moments (quest accept, shop, lore options).
+
+#### NPCDataSO
+
+ScriptableObject. One asset per unique NPC.
+
+```csharp
+string  npcId           // unique key — used in worldFlags and EventBus events
+string  displayName     // shown as speaker name in the dialogue panel
+Sprite  portrait        // NPC portrait; always on the right side of the panel
+List<ConditionalDialogue> dialogueStates   // evaluated top-down; first passing entry is used
+```
+
+```csharp
+[System.Serializable]
+class ConditionalDialogue {
+    List<string> requiredFlags    // worldFlags that must be true (all required)
+    List<string> absentFlags      // worldFlags that must be absent or false (all required)
+    DialogueSO   dialogue
+}
+```
+
+`dialogueStates` is ordered most-specific first (most conditions at the top), default last
+(empty condition lists — always passes as a fallback). Evaluation stops at the first match.
+
+---
+
+#### DialogueSO
+
+ScriptableObject. One asset per story-state conversation.
+
+```csharp
+List<DialogueNode> nodes    // nodes[0] is always the entry point
+```
+
+```csharp
+[System.Serializable]
+class DialogueNode {
+    enum Speaker { Player, NPC }
+    Speaker  speaker        // which portrait is highlighted; which name label shows
+    string   text           // line to typewriter-reveal in the panel
+
+    // Choices (empty = auto-advance to next node on confirm)
+    List<DialogueChoice> choices
+
+    // Action executed after this node's text is confirmed
+    DialogueAction actionType     // None | EndDialogue | OpenShop | UnlockAbility | SetWorldFlag
+    string         actionPayload  // abilityId (UnlockAbility), flagKey (SetWorldFlag), else empty
+    ShopInventorySO shopInventory // populated only when actionType = OpenShop
+}
+
+[System.Serializable]
+class DialogueChoice {
+    string label            // shown in choice button text
+    string requiredFlag     // worldFlag that must be true to show this choice; "" = always shown
+    int    targetNodeIndex  // index into DialogueSO.nodes to jump to on selection
+}
+
+enum DialogueAction { None, EndDialogue, OpenShop, UnlockAbility, SetWorldFlag }
+```
+
+A node with no choices and `actionType = None` auto-advances to `nodeIndex + 1`. A node with
+`actionType = EndDialogue` closes the panel when confirmed, regardless of what follows.
+
+---
+
+#### NPCController
+
+`MonoBehaviour` in each room scene. One per NPC object.
+
+```csharp
+NPCDataSO      npcData
+BoxCollider2D  interactionZone   // trigger — overlap shows "Press [Interact]" prompt above NPC
+                                 // prompt is hidden when EvaluateDialogueStates() returns null
+
+// Called by PlayerController when interact input fires while player overlaps interactionZone
+void OnInteract():
+    DialogueSO dialogue = EvaluateDialogueStates()
+    if dialogue != null:
+        DialogueManager.RunDialogue(dialogue, npcData)
+
+DialogueSO EvaluateDialogueStates():
+    foreach ConditionalDialogue cd in npcData.dialogueStates:
+        if WorldStateManager.CheckFlags(cd.requiredFlags, cd.absentFlags):
+            return cd.dialogue
+    return null
+```
+
+---
+
+#### WorldStateManager — CheckFlags
+
+New helper method:
+
+```csharp
+bool CheckFlags(List<string> required, List<string> absent):
+    return required.All(f => worldFlags.ContainsKey(f) && worldFlags[f])
+        && absent.All(f => !worldFlags.ContainsKey(f) || !worldFlags[f])
+```
+
+---
+
+#### DialogueManager
+
+Singleton `MonoBehaviour` on the Core scene.
+
+```csharp
+void RunDialogue(DialogueSO dialogue, NPCDataSO npc):
+    currentDialogue = dialogue
+    currentNpc = npc
+    currentNodeIndex = 0
+    GameState → PAUSED
+    EventBus.Publish(OnDialogueStarted { npcId: npc.npcId })
+    dialoguePanel.Open(npc.portrait, CharacterCustomizationController.GetPlayerPortrait())
+    ShowNode(nodes[0])
+
+void ShowNode(DialogueNode node):
+    dialoguePanel.SetActiveSpeaker(node.speaker,
+        displayName: node.speaker == NPC ? npc.displayName : "Player")
+    dialoguePanel.TypewriterReveal(node.text)
+    if node.choices.Count > 0:
+        dialoguePanel.ShowChoices(FilterChoices(node.choices))
+
+void Advance():
+    // Called when confirm is pressed with no choices showing
+    if typewriterRunning:
+        dialoguePanel.SkipTypewriter()    // first confirm: complete text instantly
+        return
+    ExecuteAction(currentNode)            // second confirm: run action, then step
+    if currentNode.actionType == EndDialogue or atLastNode:
+        EndDialogue()
+    else:
+        ShowNode(nodes[++currentNodeIndex])
+
+void OnChoiceSelected(int targetNodeIndex):
+    ShowNode(nodes[targetNodeIndex])
+
+void ExecuteAction(DialogueNode node):
+    switch node.actionType:
+        OpenShop:      ShopManager.OpenShop(node.shopInventory); return  // EndDialogue implicit
+        UnlockAbility: WorldStateManager.UnlockAbility(node.actionPayload)
+        SetWorldFlag:  WorldStateManager.SetWorldFlag(node.actionPayload, true)
+
+void EndDialogue():
+    dialoguePanel.Close()
+    GameState → GAMEPLAY
+    EventBus.Publish(OnDialogueEnded { npcId: currentNpc.npcId })
+
+List<DialogueChoice> FilterChoices(List<DialogueChoice> all):
+    return all.Where(c => c.requiredFlag == ""
+        || (worldFlags.ContainsKey(c.requiredFlag) && worldFlags[c.requiredFlag]))
+```
+
+---
+
+#### DialoguePanel
+
+`MonoBehaviour` on `ScreenSpaceCanvas`. Always present in the scene hierarchy; hidden (alpha
+0, non-interactive) when no dialogue is running.
+
+**Layout:**
+```
+┌──────────────────────────────────────────────────────┐
+│  [dark semi-transparent overlay — covers gameplay]   │
+│                                                      │
+│  ┌─────────────┐   Speaker Name        ┌───────────┐ │
+│  │             │   ─────────────────── │           │ │
+│  │  Player     │   Dialogue text here, │    NPC    │ │
+│  │  Portrait   │   typewriter-revealed │  Portrait │ │
+│  │  (left)     │                       │  (right)  │ │
+│  │             │   [ Choice A ]        │           │ │
+│  │             │   [ Choice B ]        │           │ │
+│  └─────────────┘                       └───────────┘ │
+└──────────────────────────────────────────────────────┘
+```
+
+- **Active speaker**: full opacity (1.0), scale 1.05×, name label visible
+- **Inactive speaker**: opacity 0.6, scale 1.0, name label hidden
+- **Typewriter**: ~40 characters/second. First confirm while animating: skip to full text.
+  Second confirm (no choices): calls `DialogueManager.Advance()`
+- **Choice buttons**: vertical list below text, D-pad navigable, confirm selects
+- **Open**: panel slides up from bottom edge (~0.2s ease-out). Dark overlay fades in.
+- **Close**: reverse.
+
+---
+
+#### ShopInventorySO
+
+ScriptableObject. One asset per merchant.
+
+```csharp
+string shopId           // unique key — used in worldFlags for one-time purchase tracking
+List<ShopEntry> entries
+
+[System.Serializable]
+struct ShopEntry {
+    ItemTemplateSO template     // sold item; an instance is generated at point of sale
+                                // (standard quality, player's current level, Rarity.Common)
+    int  goldCost
+    bool isUnlimited            // false = sold once; flagged at:
+                                // worldFlags[$"shop_{shopId}_sold_{template.baseItemId}"]
+}
+```
+
+---
+
+#### ShopManager
+
+Singleton `MonoBehaviour` on the Core scene.
+
+```csharp
+void OpenShop(ShopInventorySO inventory):
+    currentInventory = inventory
+    EventBus.Publish(OnShopOpened { inventory })
+    // ShopUI activates; game remains PAUSED (was already paused from dialogue)
+
+void BuyItem(ShopEntry entry):
+    string soldFlag = $"shop_{currentInventory.shopId}_sold_{entry.template.baseItemId}"
+    if PlayerPersistentData.gold < entry.goldCost: return
+    if !entry.isUnlimited && WorldStateManager.worldFlags[soldFlag]: return
+    ItemData item = ItemGenerator.Generate(entry.template, player.StatSheet.level, Rarity.Common)
+    if !PlayerInventory.TryAdd(item):
+        EventBus.Publish(OnInventoryFull { })   // ShopUI shows "Bag Full" message; no purchase
+        return
+    PlayerPersistentData.gold -= entry.goldCost
+    EventBus.Publish(OnGoldChanged { newTotal: PlayerPersistentData.gold })
+    if !entry.isUnlimited:
+        WorldStateManager.SetWorldFlag(soldFlag, true)
+
+void CloseShop():
+    EventBus.Publish(OnShopClosed { })
+    GameState → GAMEPLAY
+```
+
+**ShopUI layout:** Grid of item cards (icon + name + cost). Selecting a card shows a stat
+comparison panel versus the currently equipped item in that slot. Confirm calls
+`ShopManager.BuyItem()`. One-time entries already purchased are greyed out.
+
+---
+
+#### New EventBus Events (Dialogue & Shop)
+
+```csharp
+OnDialogueStarted { string npcId }
+OnDialogueEnded   { string npcId }
+OnShopOpened      { ShopInventorySO inventory }
+OnShopClosed      { }
+```
+
+---
+
 ## 4. Metroidvania Map / Scene Management
 
 ### Scene Structure
@@ -3390,6 +3653,8 @@ string optionId             // matches Sprite Library Label name exactly (e.g. "
 string displayName
 Sprite previewThumbnail     // shown in the option carousel
 bool   isUnlockedByDefault  // false = must be unlocked via WorldStateManager
+Sprite portraitSprite       // optional; shown in dialogue panel when this cosmetic is equipped
+                            // null = DialogueManager falls back to PlayerDataSO.defaultPlayerPortrait
 ```
 
 #### CosmeticRegistry
@@ -3428,6 +3693,10 @@ void ApplyAppearance(PlayerAppearanceData data)
 
 void ApplySlot(string slotId, string optionId)
     // single-slot live update — called by CustomizationUI during preview
+
+Sprite GetPlayerPortrait()
+    // returns portraitSprite of the currently active option for the primary visual slot (e.g. "outfit")
+    // falls back to PlayerDataSO.defaultPlayerPortrait if portraitSprite is null
 ```
 
 Listens to `OnAppearanceChanged` via EventBus to reapply after a scene load (the player
@@ -3497,9 +3766,4 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 
 ## TODO — Systems Not Yet Planned
 
-These systems need full design sections before any code is written. Listed in priority order —
-earlier entries block more downstream work.
-
-| Priority | System | Why it's missing / what's needed |
-|---|---|---|
-| 1 | **NPC / dialogue** | Most metroidvanias require at least a minimal system: dialogue trigger volumes, a text display component, branching or sequential lines, and integration with `WorldStateManager` for state-gated dialogue. Needed for lore delivery, merchants, and ability teachers. |
+All major systems have been designed. No outstanding gaps.
