@@ -1,4 +1,4 @@
-﻿# Kung Fu Mania — Full Architecture Plan
+﻿# Kung Fu Vania — Full Architecture Plan
 
 ---
 
