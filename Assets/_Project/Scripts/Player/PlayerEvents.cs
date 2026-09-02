@@ -1,4 +1,10 @@
 namespace KungFuVania.Player
 {
-    public struct OnPlayerLanded { }
+    
+
+    public struct PlayerStateChanged
+    {
+        public string StateId;
+    }
+public struct OnPlayerLanded { }
 }

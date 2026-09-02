@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+
+using KungFuVania.Core;
 using KungFuVania.Player.Locomotion;
 
 namespace KungFuVania.Player
@@ -34,7 +36,7 @@ namespace KungFuVania.Player
             currentState?.Tick(Time.deltaTime);
         }
 
-        public void ChangeState(string stateId)
+public void ChangeState(string stateId)
         {
             if (stateId == currentStateId) return;
 
@@ -42,6 +44,8 @@ namespace KungFuVania.Player
             currentStateId = stateId;
             currentState = states[stateId];
             currentState.Enter();
+
+            EventBus.Publish(new PlayerStateChanged { StateId = stateId });
         }
 
         public void ForceState(string stateId) => ChangeState(stateId);
