@@ -2804,6 +2804,24 @@ OnPlayerLanded { }          // published by Locomotion SM on FALL → grounded t
 
 (`OnRoomTransitionComplete` is already defined in Section 4 room transitions.)
 
+#### Parallax Background Layers (not yet designed)
+
+Not yet designed — noted here as a known gap rather than silently discovered later. A single
+static background (no parallax) was used for the initial locomotion/combat test scene
+(`Assets/_Project/Art/Backgrounds/`), manually aligned to that scene's fixed camera position —
+it does not scroll and isn't a template for the real system.
+
+Real parallax needs `CameraManager`/`CameraTarget` to actually move first (they don't yet — see
+above); a layer's scroll offset is inherently a fraction of camera movement, so there's nothing
+to drive it against until the camera follows the player. When this is designed, expect:
+- Multiple background layers (far mountains, mid-ground scenery, near foreground) each moving at
+  a different fraction of camera delta-position (0 = fixed/skybox-like, 1 = moves with camera,
+  i.e. no parallax, values in between for depth layers behind gameplay).
+- Layer draw order via `SpriteRenderer.sortingOrder` on the `Default` sorting layer, most-negative
+  = furthest back (the test background above uses `sortingOrder = -10` as its only layer).
+- Likely a `ParallaxLayer` component (per-layer scroll factor) driven by `CameraManager` publishing
+  its own frame-to-frame movement delta, rather than each layer polling the camera directly.
+
 ---
 
 ### 3u. NPC / Dialogue System
@@ -3766,4 +3784,5 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 
 ## TODO — Systems Not Yet Planned
 
-All major systems have been designed. No outstanding gaps.
+- **Parallax background layers** (§3t) — blocked on `CameraManager`/`CameraTarget` actually
+  moving; see the note in Camera System above.
