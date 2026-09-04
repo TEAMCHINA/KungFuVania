@@ -13,6 +13,10 @@ namespace KungFuVania.Player
         [SerializeField] private float runSpeedMultiplier = 1.6f;
         [SerializeField] private float jumpImpulseForce = 12f;
         [SerializeField] private float jumpCutMultiplier = 0.5f;
+        // Extra mid-air jumps beyond the initial ground jump. 0 = single jump (default, unchanged
+        // feel). Bump this in the Inspector to test double/triple jump; will later be driven by
+        // gear/skills (see GAME_PLAN.md 3k DoubleJumpAbility) instead of a flat manual value.
+        [SerializeField] private int jumpCharges = 0;
         [SerializeField] private float doubleTapWindow = 0.25f;
         [SerializeField] private float groundCheckRadius = 0.1f;
 
@@ -22,6 +26,7 @@ namespace KungFuVania.Player
         private bool isGrounded;
         private float moveIntent;
         private bool runIntent;
+        private int remainingJumpCharges;
 
         private int previousSign;
         private int pendingTapDirection;
@@ -31,6 +36,12 @@ namespace KungFuVania.Player
         public bool IsRunning { get; private set; }
         public float JumpImpulseForce => jumpImpulseForce;
         public float JumpCutMultiplier => jumpCutMultiplier;
+        public float Mass => rb.mass;
+        public int JumpCharges
+        {
+            get => jumpCharges;
+            set => jumpCharges = value;
+        }
 
         private void Awake()
         {
@@ -55,6 +66,8 @@ namespace KungFuVania.Player
         private void FixedUpdate()
         {
             isGrounded = Physics2D.OverlapCircle(groundCheck.position, groundCheckRadius, groundLayer);
+            if (isGrounded)
+                remainingJumpCharges = jumpCharges;
 
             var speed = runIntent ? walkSpeed * runSpeedMultiplier : walkSpeed;
             rb.linearVelocity = new Vector2(moveIntent * speed, rb.linearVelocity.y);
@@ -91,7 +104,15 @@ namespace KungFuVania.Player
             runIntent = running;
         }
 
+        public bool ConsumeJumpCharge()
+        {
+            if (remainingJumpCharges <= 0) return false;
+            remainingJumpCharges--;
+            return true;
+        }
+
         public void ApplyImpulse(Vector2 force) => rb.AddForce(force, ForceMode2D.Impulse);
+        public void SetVerticalVelocity(float verticalVelocity) => rb.linearVelocity = new Vector2(rb.linearVelocity.x, verticalVelocity);
         public void ForceLocomotionState(string stateId) => stateMachine.ForceState(stateId);
         public Vector2 GetVelocity() => rb.linearVelocity;
         public bool IsGrounded() => isGrounded;

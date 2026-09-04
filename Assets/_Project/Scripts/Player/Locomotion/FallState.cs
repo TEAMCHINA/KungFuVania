@@ -23,6 +23,8 @@ namespace KungFuVania.Player.Locomotion
 
             if (!Controller.IsGrounded()) return;
 
+            EventBus.Publish(new OnPlayerLanded());
+
             if (direction == 0f)
                 machine.ChangeState("IDLE");
             else if (Controller.IsRunning)
@@ -31,9 +33,6 @@ namespace KungFuVania.Player.Locomotion
                 machine.ChangeState("WALK");
         }
 
-        public void Exit()
-        {
-            EventBus.Publish(new OnPlayerLanded());
-        }
+        public void Exit() { }
     }
 }

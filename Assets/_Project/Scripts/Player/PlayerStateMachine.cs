@@ -52,7 +52,18 @@ public void ChangeState(string stateId)
 
         public void NotifyJumpPressed()
         {
-            if (currentStateId != "JUMP" && controller.IsGrounded())
+            if (controller.IsGrounded())
+            {
+                if (currentStateId != "JUMP")
+                    ChangeState("JUMP");
+                return;
+            }
+
+            if (!controller.ConsumeJumpCharge()) return;
+
+            if (currentStateId == "JUMP")
+                (currentState as JumpState)?.Enter();
+            else
                 ChangeState("JUMP");
         }
 

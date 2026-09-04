@@ -13,9 +13,14 @@ namespace KungFuVania.Player.Locomotion
             this.machine = machine;
         }
 
+        // Sets vertical velocity to an absolute value rather than adding an impulse, so every
+        // jump — ground or airborne charge-based — launches the player the same amount
+        // regardless of whatever vertical velocity it already had (grounded is ~0 anyway).
+        // Divided by mass (impulse / mass = velocity) so gear/skills that later change the
+        // player's Rigidbody2D mass raise or lower jump height without touching this code.
         public void Enter()
         {
-            Controller.ApplyImpulse(Vector2.up * Controller.JumpImpulseForce);
+            Controller.SetVerticalVelocity(Controller.JumpImpulseForce / Controller.Mass);
         }
 
         public void Tick(float deltaTime)
