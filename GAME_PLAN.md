@@ -99,6 +99,14 @@ IDLE → WALK → RUN → JUMP → FALL → WALL_SLIDE → CROUCH → BLOCKING �
 state that cannot be interrupted by any input. Exit only occurs via `RespawnManager` after the
 full cinematic death sequence completes.
 
+`WALL_SLIDE` is entered from `FALL` when the player is airborne, moving into a wall (contact
+against a `groundLayer`-tagged collider on the player's facing side), and already descending
+(`Controller.GetVelocity().y <= 0`). Descent is clamped to a slower speed and a slide animation
+plays. Exits back to `FALL` if the player lets go of the wall direction or the wall ends; exits
+to `IDLE`/`WALK`/`RUN` on landing, same as `FALL`. See 3k for `WALL_JUMP` — jumping while in
+`WALL_SLIDE` launches the player up and away from the wall using its own charge pool, independent
+of double/triple jump charges (see Sequence Breaks note in 3k).
+
 `BLOCKING` is a held locomotion state entered when the defensive button is held and no parry
 triggered on the initial press (see Combat System). Player can move slowly while blocking
 (configurable). Releasing exits back to the appropriate locomotion state.
@@ -1138,12 +1146,53 @@ Adding a new movement ability never requires touching `PlayerStateMachine` or
 components are installed:
 
 ```csharp
-void    ApplyImpulse(Vector2 force)             // adds velocity — double jump, air dash, grapple pull
+void    ApplyImpulse(Vector2 force)             // adds velocity — air dash, grapple pull
+void    SetVerticalVelocity(float velocity)     // sets vertical speed directly (absolute, not
+                                                 // additive) — ground jump, aerial charge jumps,
+                                                 // and wall jump all use this so every launch is
+                                                 // the same regardless of current fall speed
 void    ForceLocomotionState(string stateId)    // overrides current locomotion state
 Vector2 GetVelocity()                           // read current velocity
 bool    IsGrounded()                            // ground contact query
 bool    IsAirborne()                            // convenience inverse
 ```
+
+#### Wall Jump (`WallJumpAbility` — `WALL_JUMP`)
+
+Precursor to Double Jump for vertical access — a single unlock before the player has any
+air-jump charges at all (see Ability Gates: `WALL_JUMP` is listed before `DOUBLE_JUMP`).
+Uses its own charge pool so unlocking/equipping one never grants the other; the two are
+designed to combine, not gate each other (see Sequence Breaks below).
+
+```csharp
+int     maxWallJumps       // base value, default 1 — consecutive wall jumps off the SAME wall
+                            // without an intervening ground touch or contact with another wall
+int     remainingWallJumps // runtime counter; restored on landing or on contacting a new wall
+float   wallSlideSpeed     // max downward speed while WALL_SLIDE is held (clamped, not instant)
+Vector2 wallJumpVelocity   // (outward.x, upward.y) — launches away from the wall, not straight up
+float   wallStickTime      // brief input-lockout after leaving the wall so the jump reads as
+                            // "off the wall" instead of an instant U-turn back into it
+```
+
+- `PlayerStateMachine` enters `WALL_SLIDE` from `FALL` per the condition in 2 above
+- `WallJumpAbility` listens to `OnJump` from `InputReader`; only acts while in `WALL_SLIDE`
+  and `remainingWallJumps > 0`
+- Calls `playerController.SetVerticalVelocity` for the upward component and sets the
+  horizontal component outward from the wall the same way — absolute, not additive, for the
+  same reason as `JumpState.Enter`: a wall jump should always launch the same amount
+  regardless of how fast the player was already sliding/falling
+- Decrements `remainingWallJumps`; restored on landing (`OnPlayerLanded`) or on contacting a
+  new wall — entirely independent of `DoubleJumpAbility.remainingJumps`; neither pool reads
+  or modifies the other
+- Base game grants 0 `maxWallJumps` until the ability/gear is acquired, same as
+  `PlayerController.JumpCharges` defaulting to 0 until double jump is worth testing
+
+**On sequence breaks:** wall jump, double/triple jump, and air dash are independent, stackable
+systems by design. Nothing in this plan gates one on the state or charge count of another —
+e.g. a wall jump never requires or consumes a double-jump charge, and nothing stops chaining
+wall-jump → double-jump → air-dash in a single airborne sequence if the player has charges for
+all three. Emergent sequence breaks from combining them are an accepted, intentional consequence
+of this design, not a bug to patch out later.
 
 #### Double Jump (`DoubleJumpAbility`)
 
@@ -1155,7 +1204,10 @@ float jumpImpulseForce
 
 - Listens to `OnJump` from `InputReader`
 - Only acts when `IsAirborne()` and `remainingJumps > 0`
-- Calls `playerController.ApplyImpulse(Vector2.up * jumpImpulseForce)`
+- Calls `playerController.SetVerticalVelocity(jumpImpulseForce)` — absolute, not additive (see
+  PlayerController Hooks above); an additive impulse doesn't fully cancel existing fall speed,
+  so a charge jump thrown out while already falling would launch weaker than one thrown at
+  the apex
 - Decrements `remainingJumps`; on `OnPlayerLanded`:
   `remainingJumps = maxExtraJumps + EquipmentManager.GetChargeBonus("DOUBLE_JUMP")`
 
@@ -3786,3 +3838,7 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 
 - **Parallax background layers** (§3t) — blocked on `CameraManager`/`CameraTarget` actually
   moving; see the note in Camera System above.
+- **Wall Jump / `WALL_SLIDE`** (§2, §3k) — designed, not yet implemented. Next up: `WALL_SLIDE`
+  locomotion state plus a `wallJumpCharges`-style property, mirroring how `PlayerController`
+  currently exposes `JumpCharges` for double/triple jump. Independent charge pool from
+  double/triple jump — see the Sequence Breaks note in 3k.
