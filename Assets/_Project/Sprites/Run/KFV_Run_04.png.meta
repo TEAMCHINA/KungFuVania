@@ -1,10 +1,10 @@
 fileFormatVersion: 2
-guid: 3f4cfa79f5e0a674d80386dcbd794743
+guid: 97e46726788561e45b956d88bc13a3f9
 TextureImporter:
   internalIDToNameTable:
   - first:
-      213: -8376604059132215534
-    second: KFV_WALK_07_0
+      213: 2214958520329758123
+    second: KFV_Run_04_0
   externalObjects: {}
   serializedVersion: 13
   mipmaps:
@@ -24,7 +24,7 @@ TextureImporter:
     heightScale: 0.25
     normalMapFilter: 0
     flipGreenChannel: 0
-  isReadable: 1
+  isReadable: 0
   streamingMipmaps: 0
   streamingMipmapsPriority: 0
   vTOnly: 0
@@ -50,8 +50,8 @@ TextureImporter:
   spriteExtrude: 1
   spriteMeshType: 1
   alignment: 9
-  spritePivot: {x: 0.534, y: 0}
-  spritePixelsToUnits: 240
+  spritePivot: {x: 0.5, y: 0}
+  spritePixelsToUnits: 392
   spriteBorder: {x: 0, y: 0, z: 0, w: 0}
   spriteGenerateFallbackPhysicsShape: 1
   alphaUsage: 1
@@ -113,13 +113,13 @@ TextureImporter:
     serializedVersion: 2
     sprites:
     - serializedVersion: 2
-      name: KFV_WALK_07_0
+      name: KFV_Run_04_0
       rect:
         serializedVersion: 2
-        x: 38
-        y: 0
-        width: 192
-        height: 382
+        x: 70
+        y: 5
+        width: 500
+        height: 766
       alignment: 0
       pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
@@ -128,8 +128,8 @@ TextureImporter:
       physicsShape: []
       tessellationDetail: -1
       bones: []
-      spriteID: 21f34574df250cb80800000000000000
-      internalID: -8376604059132215534
+      spriteID: ba5ea74f90d1dbe10800000000000000
+      internalID: 2214958520329758123
       vertices: []
       indices: 
       edges: []
@@ -148,7 +148,7 @@ TextureImporter:
     spriteCustomMetadata:
       entries: []
     nameFileIdTable:
-      KFV_WALK_07_0: -8376604059132215534
+      KFV_Run_04_0: 2214958520329758123
   mipmapLimitGroupName: 
   pSDRemoveMatte: 0
   userData: 
