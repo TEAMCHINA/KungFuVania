@@ -7,9 +7,8 @@ namespace KungFuVania.Combat
     {
         [SerializeField] private SpriteRenderer spriteRenderer;
         [SerializeField] private Sprite idleSprite;
-        // All attacks are high hits for now — no low attacks or crouch exist yet to trigger a
-        // low reaction. Add a struckLowSprite + height check on HitboxDataSO when that lands.
         [SerializeField] private Sprite struckHighSprite;
+        [SerializeField] private Sprite struckLowSprite;
         [SerializeField] private float struckPoseDuration = 0.2f;
 
         private HurtboxController hurtbox;
@@ -29,10 +28,10 @@ namespace KungFuVania.Combat
                 spriteRenderer.sprite = idleSprite;
         }
 
-        private void HandleHit(float damage)
+        private void HandleHit(float damage, bool isLow)
         {
             struckUntil = Time.time + struckPoseDuration;
-            if (spriteRenderer != null) spriteRenderer.sprite = struckHighSprite;
+            if (spriteRenderer != null) spriteRenderer.sprite = isLow ? struckLowSprite : struckHighSprite;
         }
     }
 }

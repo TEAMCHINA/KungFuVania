@@ -25,6 +25,12 @@ namespace KungFuVania.Player.Locomotion
                 return;
             }
 
+            if (Controller.MoveInput.y < 0f)
+            {
+                machine.ChangeState("CROUCH");
+                return;
+            }
+
             if (Controller.MoveInput.x != 0f)
                 machine.ChangeState("WALK");
         }

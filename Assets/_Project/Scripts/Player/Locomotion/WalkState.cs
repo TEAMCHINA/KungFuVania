@@ -23,6 +23,12 @@ namespace KungFuVania.Player.Locomotion
                 return;
             }
 
+            if (Controller.MoveInput.y < 0f)
+            {
+                machine.ChangeState("CROUCH");
+                return;
+            }
+
             var horizontal = Controller.MoveInput.x;
             if (horizontal == 0f)
             {

@@ -1489,7 +1489,8 @@ Actor (root)
 ├── Hitbox_Secondary   — BoxCollider2D (trigger), starts disabled, Physics layer: [Actor]Hitbox
 ├── Hurtbox_Body       — BoxCollider2D (trigger), always active,   Physics layer: [Actor]Hurtbox  ← primary body collider
 │   ├── Hurtbox_Head   — BoxCollider2D (trigger), optional child,  Physics layer: [Actor]Hurtbox
-│   └── Hurtbox_Block  — BoxCollider2D (trigger), optional child,  Physics layer: [Actor]Hurtbox
+│   ├── Hurtbox_Block  — BoxCollider2D (trigger), optional child,  Physics layer: [Actor]Hurtbox
+│   └── Hurtbox_Low    — BoxCollider2D (trigger), optional child,  Physics layer: [Actor]Hurtbox
 ├── Hurtbox_Pierce     — BoxCollider2D (trigger), NEVER disabled,  Physics layer: [Actor]HurtboxPierce
 └── HitboxEventRelay   — MonoBehaviour, receives animation events, routes to HitboxController
 ```
@@ -1505,6 +1506,24 @@ When enabled, `Hurtbox_Body` simultaneously **expands** to physically encompass 
 collider — guaranteeing that any contact with the shield also contacts the parent body in the same
 physics step. This is the mechanism that makes the parent the sole trigger for resolution (see below).
 Only `canBlock = true` actors carry this child; non-blocking enemies are never subject to block reduction.
+
+**`Hurtbox_Low`** — covers a low/leg region for actors that want a visibly different reaction to a
+low-height hit (e.g. a struck-low pose in response to a sweep or crouch-kick). Optional, same as
+`Hurtbox_Head`: most actors skip it, and attacks that aren't aimed low simply never touch it. Sets
+`isLowHit = true` only — like `Hurtbox_Head`, it never triggers resolution itself, `Hurtbox_Body`
+does (see Damage Resolution below). There's no damage or stagger modifier tied to it today, just an
+`isLowHit` flag alongside the normal hit, read by whatever picks the struck pose.
+
+This session's `HurtboxController` doesn't yet have the full `HurtboxZoneForwarder` /
+`OnZoneHit(zoneType, other)` / `LateFixedUpdate` pipeline described above (no `DamageCalculator`,
+`ICombatStateProvider`, or `blockResult` exist yet either — still trimmed to body-only). The minimal
+stand-in used for `Hurtbox_Low`: `HurtboxController` holds an optional `lowHurtboxCollider`
+reference, and on every `OnTriggerEnter2D` (which, same as `Hurtbox_Head` would, fires once per own
+collider touched — a hit overlapping both `Hurtbox_Body` and `Hurtbox_Low` calls this method twice)
+it geometrically checks `lowHurtboxCollider.IsTouching(other)` and records the flag, deferring the
+actual `OnHit` invocation to `LateUpdate` so the redundant calls collapse into exactly one
+resolution per hit. Swap this for the real forwarder/zoneType pipeline once `Hurtbox_Head`/
+`Hurtbox_Block` are actually built.
 
 #### Hurtbox Pose Matching
 

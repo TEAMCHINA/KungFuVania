@@ -13,6 +13,8 @@ namespace KungFuVania.Player
         [SerializeField] private HurtboxController hurtboxController;
         [SerializeField] private HitboxDataSO punchData;
         [SerializeField] private HitboxDataSO kickData;
+        [SerializeField] private HitboxDataSO crouchPunchData;
+        [SerializeField] private HitboxDataSO crouchKickData;
 
         [SerializeField] private LayerMask dodgeObstructionMask;
         [SerializeField] private float dodgeTotalDuration = 0.2f;
@@ -41,6 +43,8 @@ namespace KungFuVania.Player
             states["NONE"] = new NoneState();
             states["ATTACK_1"] = new AttackState(this, punchData, "ATTACK_1");
             states["ATTACK_2"] = new AttackState(this, kickData, "ATTACK_2");
+            states["CROUCH_ATTACK_1"] = new AttackState(this, crouchPunchData, "CROUCH_ATTACK_1");
+            states["CROUCH_ATTACK_2"] = new AttackState(this, crouchKickData, "CROUCH_ATTACK_2");
             states["DODGE"] = new DodgeState(this, dodgeTotalDuration, dodgeSpeedCurve, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask);
             states["DODGE_RECOVERY"] = new DodgeRecoveryState(this, dodgeRecoveryDuration);
         }
@@ -55,11 +59,16 @@ namespace KungFuVania.Player
             currentState?.Tick(Time.deltaTime);
         }
 
-        // Only succeeds from NONE while grounded — no combos, no air attacks/dodge this session.
+        // Only succeeds from NONE — no combos this session. Crouch attacks require the player to
+        // actually be in CROUCH; every other state (standing attacks, dodge) requires standing
+        // (IDLE/WALK/RUN) — no air attacks/dodge, no attacking mid-crouch-transition either.
         public bool TryEnterState(string stateId)
         {
             if (currentStateId != "NONE") return false;
-            if (!IsGroundedLocomotion(locomotion.CurrentStateId)) return false;
+
+            var locomotionId = locomotion.CurrentStateId;
+            var allowed = IsCrouchAttack(stateId) ? locomotionId == "CROUCH" : IsGroundedLocomotion(locomotionId);
+            if (!allowed) return false;
 
             ChangeState(stateId);
             return true;
@@ -79,5 +88,8 @@ namespace KungFuVania.Player
 
         private static bool IsGroundedLocomotion(string locomotionStateId) =>
             locomotionStateId == "IDLE" || locomotionStateId == "WALK" || locomotionStateId == "RUN";
+
+        private static bool IsCrouchAttack(string stateId) =>
+            stateId == "CROUCH_ATTACK_1" || stateId == "CROUCH_ATTACK_2";
     }
 }

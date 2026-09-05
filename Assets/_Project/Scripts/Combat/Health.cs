@@ -28,7 +28,7 @@ namespace KungFuVania.Combat
         private void OnEnable() => hurtbox.OnHit += HandleHit;
         private void OnDisable() => hurtbox.OnHit -= HandleHit;
 
-        private void HandleHit(float damage)
+        private void HandleHit(float damage, bool isLow)
         {
             CurrentHealth = Mathf.Max(0f, CurrentHealth - damage);
             OnDamaged?.Invoke();

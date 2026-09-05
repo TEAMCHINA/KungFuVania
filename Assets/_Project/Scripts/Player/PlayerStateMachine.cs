@@ -26,6 +26,7 @@ namespace KungFuVania.Player
             states["JUMP"] = new JumpState(this);
             states["FALL"] = new FallState(this);
             states["WALL_SLIDE"] = new WallSlideState(this);
+            states["CROUCH"] = new CrouchState(this);
         }
 
         private void Start()
