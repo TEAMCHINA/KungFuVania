@@ -1,5 +1,6 @@
 using UnityEngine;
 using KungFuVania.Input;
+using KungFuVania.Actors;
 
 namespace KungFuVania.Player
 {
@@ -9,6 +10,7 @@ namespace KungFuVania.Player
         [SerializeField] private InputReader inputReader;
         [SerializeField] private Transform groundCheck;
         [SerializeField] private LayerMask groundLayer;
+        [SerializeField] private LayerMask npcBodyLayer;
         [SerializeField] private float walkSpeed = 5f;
         [SerializeField] private float runSpeedMultiplier = 1.6f;
         [SerializeField] private float jumpImpulseForce = 12f;
@@ -111,7 +113,52 @@ namespace KungFuVania.Player
             if (Time.time < wallJumpLockUntil) return;
 
             var speed = runIntent ? walkSpeed * runSpeedMultiplier : walkSpeed;
+
+            if (TryResolveNpcPush(speed, out var pushVelocityX))
+            {
+                rb.linearVelocity = new Vector2(pushVelocityX, rb.linearVelocity.y);
+                return;
+            }
+
             rb.linearVelocity = new Vector2(moveIntent * speed, rb.linearVelocity.y);
+        }
+
+        // Mass contest against a blocking NpcBlocker: heavier side "wins" and keeps moving at its
+        // own intended speed, lighter side is dragged along — both end up at winnerSpeed *
+        // (loserMass / winnerMass). A stationary heavier NPC (winnerSpeed = 0) naturally stops the
+        // player rather than needing a separate "can't push through" case. Only engages while the
+        // player is actively moving toward the NPC, so backing away is never blocked.
+        private bool TryResolveNpcPush(float speed, out float pushVelocityX)
+        {
+            pushVelocityX = 0f;
+            if (moveIntent == 0f) return false;
+
+            var hit = Physics2D.OverlapBox(GetBodyCenter(), capsule.size, 0f, npcBodyLayer);
+            // The NpcBody trigger lives on a child collider (its own layer, separate from the
+            // NPC's other colliders); attachedRigidbody resolves to the actual body that owns it.
+            var blocker = hit != null && hit.attachedRigidbody != null
+                ? hit.attachedRigidbody.GetComponent<NpcBlocker>()
+                : null;
+            if (blocker == null || !blocker.BlocksPlayer) return false;
+
+            var towardNpc = Mathf.Sign(blocker.GetPosition().x - rb.position.x);
+            if (Mathf.Sign(moveIntent) != towardNpc) return false;
+
+            var playerMass = Mass;
+            var npcMass = blocker.Mass;
+            if (playerMass == npcMass) return true; // tie: stand-off, both stay put
+
+            var playerWins = playerMass > npcMass;
+            var winnerVelocityX = playerWins ? moveIntent * speed : 0f;
+            var ratio = Mathf.Min(playerMass, npcMass) / Mathf.Max(playerMass, npcMass);
+            var intendedVelocityX = winnerVelocityX * ratio;
+
+            // Move the NPC first and use what it actually achieved (it may be jammed against a
+            // wall) so the player is kept in sync rather than sliding on through a stopped NPC —
+            // its own colliders are triggers, so nothing else would stop the player from doing so.
+            var actualDelta = blocker.MoveBy(intendedVelocityX * Time.fixedDeltaTime, groundLayer);
+            pushVelocityX = actualDelta / Time.fixedDeltaTime;
+            return true;
         }
 
         private void HandleMove(Vector2 value)
