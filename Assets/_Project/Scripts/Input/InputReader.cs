@@ -9,6 +9,9 @@ namespace KungFuVania.Input
         public event Action<Vector2> OnMove;
         public event Action OnJump;
         public event Action OnJumpCancelled;
+        public event Action OnAttackLight;
+        public event Action OnAttackHeavy;
+        public event Action OnDodge;
 
         private PlayerControls controls;
 
@@ -21,6 +24,9 @@ namespace KungFuVania.Input
                 controls.Player.Move.canceled += ctx => OnMove?.Invoke(Vector2.zero);
                 controls.Player.Jump.performed += ctx => OnJump?.Invoke();
                 controls.Player.Jump.canceled += ctx => OnJumpCancelled?.Invoke();
+                controls.Player.AttackLight.performed += ctx => OnAttackLight?.Invoke();
+                controls.Player.AttackHeavy.performed += ctx => OnAttackHeavy?.Invoke();
+                controls.Player.Dodge.performed += ctx => OnDodge?.Invoke();
             }
 
             controls.Player.Enable();

@@ -1,5 +1,6 @@
 using UnityEngine;
 using KungFuVania.Core;
+using KungFuVania.Combat;
 
 namespace KungFuVania.Player
 {
@@ -14,6 +15,9 @@ namespace KungFuVania.Player
         private string pendingStateId;
         private float landingUntil;
 
+        private string currentLocomotionId = "IDLE";
+        private string currentCombatId = "NONE";
+
         private void Awake()
         {
             animator = GetComponent<Animator>();
@@ -24,14 +28,16 @@ namespace KungFuVania.Player
 
         private void OnEnable()
         {
-            EventBus.Subscribe<PlayerStateChanged>(HandleStateChanged);
+            EventBus.Subscribe<PlayerStateChanged>(HandleLocomotionChanged);
             EventBus.Subscribe<OnPlayerLanded>(HandleLanded);
+            EventBus.Subscribe<CombatStateChanged>(HandleCombatChanged);
         }
 
         private void OnDisable()
         {
-            EventBus.Unsubscribe<PlayerStateChanged>(HandleStateChanged);
+            EventBus.Unsubscribe<PlayerStateChanged>(HandleLocomotionChanged);
             EventBus.Unsubscribe<OnPlayerLanded>(HandleLanded);
+            EventBus.Unsubscribe<CombatStateChanged>(HandleCombatChanged);
         }
 
         private void Update()
@@ -42,19 +48,33 @@ namespace KungFuVania.Player
                 pendingStateId = null;
             }
 
-            if (controller.MoveInput.x != 0f)
-                spriteRenderer.flipX = controller.MoveInput.x < 0f;
+            spriteRenderer.flipX = !controller.FacingRight;
         }
 
-        private void HandleStateChanged(PlayerStateChanged evt)
+        private void HandleLocomotionChanged(PlayerStateChanged evt)
         {
+            currentLocomotionId = evt.StateId;
+            RefreshAnimation();
+        }
+
+        private void HandleCombatChanged(CombatStateChanged evt)
+        {
+            currentCombatId = evt.StateId;
+            RefreshAnimation();
+        }
+
+        // Combat wins whenever it isn't NONE — see GAME_PLAN.md 2 "Two Concurrent Layers".
+        private void RefreshAnimation()
+        {
+            var stateToPlay = currentCombatId != "NONE" ? currentCombatId : currentLocomotionId;
+
             if (Time.time < landingUntil)
             {
-                pendingStateId = evt.StateId;
+                pendingStateId = stateToPlay;
                 return;
             }
 
-            animator.Play(evt.StateId);
+            animator.Play(stateToPlay);
         }
 
         private void HandleLanded(OnPlayerLanded evt)

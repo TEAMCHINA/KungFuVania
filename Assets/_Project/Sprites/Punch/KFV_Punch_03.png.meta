@@ -1,13 +1,10 @@
 fileFormatVersion: 2
-guid: d815b0ffa097fb5429e09ab64ffa229a
+guid: 242b94812242baf4fae3df803d4eecc2
 TextureImporter:
   internalIDToNameTable:
   - first:
-      213: 640596944644792928
-    second: screenshot-20260902-013633_0
-  - first:
-      213: 8873498957269331726
-    second: screenshot-20260902-013633_1
+      213: -3541792709891731952
+    second: KFV_Punch_03_0
   externalObjects: {}
   serializedVersion: 13
   mipmaps:
@@ -49,12 +46,12 @@ TextureImporter:
   nPOTScale: 0
   lightmap: 0
   compressionQuality: 50
-  spriteMode: 2
+  spriteMode: 1
   spriteExtrude: 1
   spriteMeshType: 1
-  alignment: 0
-  spritePivot: {x: 0.5, y: 0.5}
-  spritePixelsToUnits: 100
+  alignment: 9
+  spritePivot: {x: 0.5, y: 0}
+  spritePixelsToUnits: 160
   spriteBorder: {x: 0, y: 0, z: 0, w: 0}
   spriteGenerateFallbackPhysicsShape: 1
   alphaUsage: 1
@@ -116,13 +113,13 @@ TextureImporter:
     serializedVersion: 2
     sprites:
     - serializedVersion: 2
-      name: screenshot-20260902-013633_0
+      name: KFV_Punch_03_0
       rect:
         serializedVersion: 2
-        x: 601
-        y: 403
-        width: 58
-        height: 116
+        x: 0
+        y: 0
+        width: 197
+        height: 300
       alignment: 0
       pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
@@ -131,30 +128,8 @@ TextureImporter:
       physicsShape: []
       tessellationDetail: -1
       bones: []
-      spriteID: 062e0c1f68bd3e800800000000000000
-      internalID: 640596944644792928
-      vertices: []
-      indices: 
-      edges: []
-      weights: []
-    - serializedVersion: 2
-      name: screenshot-20260902-013633_1
-      rect:
-        serializedVersion: 2
-        x: 62
-        y: 283
-        width: 1136
-        height: 72
-      alignment: 0
-      pivot: {x: 0, y: 0}
-      border: {x: 0, y: 0, z: 0, w: 0}
-      customData: 
-      outline: []
-      physicsShape: []
-      tessellationDetail: -1
-      bones: []
-      spriteID: e0f66dea940052b70800000000000000
-      internalID: 8873498957269331726
+      spriteID: 01ec5daab4609dec0800000000000000
+      internalID: -3541792709891731952
       vertices: []
       indices: 
       edges: []
@@ -163,7 +138,7 @@ TextureImporter:
     customData: 
     physicsShape: []
     bones: []
-    spriteID: 
+    spriteID: 5e97eb03825dee720800000000000000
     internalID: 0
     vertices: []
     indices: 
@@ -173,8 +148,7 @@ TextureImporter:
     spriteCustomMetadata:
       entries: []
     nameFileIdTable:
-      screenshot-20260902-013633_0: 640596944644792928
-      screenshot-20260902-013633_1: 8873498957269331726
+      KFV_Punch_03_0: -3541792709891731952
   mipmapLimitGroupName: 
   pSDRemoveMatte: 0
   userData: 

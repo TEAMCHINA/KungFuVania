@@ -34,9 +34,12 @@ namespace KungFuVania.Player
         [SerializeField] private float wallStickTime = 0.2f;
 
         private Rigidbody2D rb;
+        private CapsuleCollider2D capsule;
         private PlayerStateMachine stateMachine;
+        private PlayerCombatStateMachine combatStateMachine;
 
         private bool isGrounded;
+        private bool physicsSuspended;
         private float moveIntent;
         private bool runIntent;
         private int remainingJumpCharges;
@@ -50,6 +53,7 @@ namespace KungFuVania.Player
 
         public Vector2 MoveInput { get; private set; }
         public bool IsRunning { get; private set; }
+        public bool FacingRight { get; private set; } = true;
         public float JumpImpulseForce => jumpImpulseForce;
         public float JumpCutMultiplier => jumpCutMultiplier;
         public float Mass => rb.mass;
@@ -68,7 +72,9 @@ namespace KungFuVania.Player
         private void Awake()
         {
             rb = GetComponent<Rigidbody2D>();
+            capsule = GetComponent<CapsuleCollider2D>();
             stateMachine = GetComponent<PlayerStateMachine>();
+            combatStateMachine = GetComponent<PlayerCombatStateMachine>();
         }
 
         private void OnEnable()
@@ -76,6 +82,9 @@ namespace KungFuVania.Player
             inputReader.OnMove += HandleMove;
             inputReader.OnJump += HandleJump;
             inputReader.OnJumpCancelled += HandleJumpCancelled;
+            inputReader.OnAttackLight += HandleAttackLight;
+            inputReader.OnAttackHeavy += HandleAttackHeavy;
+            inputReader.OnDodge += HandleDodge;
         }
 
         private void OnDisable()
@@ -83,6 +92,9 @@ namespace KungFuVania.Player
             inputReader.OnMove -= HandleMove;
             inputReader.OnJump -= HandleJump;
             inputReader.OnJumpCancelled -= HandleJumpCancelled;
+            inputReader.OnAttackLight -= HandleAttackLight;
+            inputReader.OnAttackHeavy -= HandleAttackHeavy;
+            inputReader.OnDodge -= HandleDodge;
         }
 
         private void FixedUpdate()
@@ -95,6 +107,7 @@ namespace KungFuVania.Player
                 lastWallTouched = null;
             }
 
+            if (physicsSuspended) return;
             if (Time.time < wallJumpLockUntil) return;
 
             var speed = runIntent ? walkSpeed * runSpeedMultiplier : walkSpeed;
@@ -104,6 +117,8 @@ namespace KungFuVania.Player
         private void HandleMove(Vector2 value)
         {
             MoveInput = value;
+
+            if (value.x != 0f) FacingRight = value.x > 0f;
 
             var newSign = System.Math.Sign(value.x);
             if (newSign == 0)
@@ -125,6 +140,9 @@ namespace KungFuVania.Player
 
         private void HandleJump() => stateMachine.NotifyJumpPressed();
         private void HandleJumpCancelled() => stateMachine.NotifyJumpReleased();
+        private void HandleAttackLight() => combatStateMachine.TryEnterState("ATTACK_1");
+        private void HandleAttackHeavy() => combatStateMachine.TryEnterState("ATTACK_2");
+        private void HandleDodge() => combatStateMachine.TryEnterState("DODGE");
 
         public void SetMoveIntent(float horizontalDirection, bool running)
         {
@@ -186,5 +204,19 @@ namespace KungFuVania.Player
         public Vector2 GetVelocity() => rb.linearVelocity;
         public bool IsGrounded() => isGrounded;
         public bool IsAirborne() => !IsGrounded();
+
+        // Suspends normal walk/run velocity application in FixedUpdate — used by DodgeState,
+        // which drives position itself via MoveTo and must not have moveIntent-based velocity
+        // fighting its per-tick delta on a Kinematic body.
+        public void SetKinematic(bool kinematic)
+        {
+            physicsSuspended = kinematic;
+            rb.bodyType = kinematic ? RigidbodyType2D.Kinematic : RigidbodyType2D.Dynamic;
+        }
+
+        public void MoveTo(Vector2 position) => rb.MovePosition(position);
+        public Vector2 GetPosition() => rb.position;
+        public Vector2 GetBodyCenter() => rb.position + capsule.offset;
+        public float BodyHalfWidth => capsule.size.x * 0.5f;
     }
 }

@@ -14,6 +14,7 @@ namespace KungFuVania.Player
 
         private PlayerController controller;
         public PlayerController Controller => controller;
+        public string CurrentStateId => currentStateId;
 
         private void Awake()
         {
