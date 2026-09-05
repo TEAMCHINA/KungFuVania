@@ -675,6 +675,7 @@ MonoBehaviour:
   kickData: {fileID: 11400000, guid: 35b90968b7caee54bbd3da66f5ba7770, type: 2}
   crouchPunchData: {fileID: 11400000, guid: 62a30b82cfa1cf247a67e7cb40fbbd95, type: 2}
   crouchKickData: {fileID: 11400000, guid: 2a8f8225a3f66164d84f0a045dd613ab, type: 2}
+  jumpKickData: {fileID: 11400000, guid: 9bd907c7d27815347bd3a34270658e51, type: 2}
   dodgeObstructionMask:
     serializedVersion: 2
     m_Bits: 256
@@ -1750,7 +1751,7 @@ BoxCollider2D:
   m_UsedByEffector: 0
   m_CompositeOperation: 0
   m_CompositeOrder: 0
-  m_Offset: {x: 0, y: 0}
+  m_Offset: {x: 0, y: 0.1784189}
   m_SpriteTilingProperty:
     border: {x: 0, y: 0, z: 0, w: 0}
     pivot: {x: 0, y: 0}
@@ -1760,7 +1761,7 @@ BoxCollider2D:
     drawMode: 0
     adaptiveTiling: 0
   m_AutoTiling: 0
-  m_Size: {x: 1, y: 0.2}
+  m_Size: {x: 1, y: 0.55683774}
   m_EdgeRadius: 0
 --- !u!4 &1396954226
 Transform:
@@ -2030,7 +2031,7 @@ BoxCollider2D:
   m_UsedByEffector: 0
   m_CompositeOperation: 0
   m_CompositeOrder: 0
-  m_Offset: {x: 0, y: 0}
+  m_Offset: {x: 0, y: -0.054898143}
   m_SpriteTilingProperty:
     border: {x: 0, y: 0, z: 0, w: 0}
     pivot: {x: 0, y: 0}
@@ -2040,7 +2041,7 @@ BoxCollider2D:
     drawMode: 0
     adaptiveTiling: 0
   m_AutoTiling: 0
-  m_Size: {x: 0.9, y: 1.8}
+  m_Size: {x: 0.9, y: 1.9097962}
   m_EdgeRadius: 0
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

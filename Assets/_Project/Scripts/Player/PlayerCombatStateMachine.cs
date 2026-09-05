@@ -15,6 +15,7 @@ namespace KungFuVania.Player
         [SerializeField] private HitboxDataSO kickData;
         [SerializeField] private HitboxDataSO crouchPunchData;
         [SerializeField] private HitboxDataSO crouchKickData;
+        [SerializeField] private HitboxDataSO jumpKickData;
 
         [SerializeField] private LayerMask dodgeObstructionMask;
         [SerializeField] private float dodgeTotalDuration = 0.2f;
@@ -45,6 +46,7 @@ namespace KungFuVania.Player
             states["ATTACK_2"] = new AttackState(this, kickData, "ATTACK_2");
             states["CROUCH_ATTACK_1"] = new AttackState(this, crouchPunchData, "CROUCH_ATTACK_1");
             states["CROUCH_ATTACK_2"] = new AttackState(this, crouchKickData, "CROUCH_ATTACK_2");
+            states["JUMP_KICK"] = new AttackState(this, jumpKickData, "JUMP_KICK", exitOnLanding: true);
             states["DODGE"] = new DodgeState(this, dodgeTotalDuration, dodgeSpeedCurve, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask);
             states["DODGE_RECOVERY"] = new DodgeRecoveryState(this, dodgeRecoveryDuration);
         }
@@ -60,14 +62,18 @@ namespace KungFuVania.Player
         }
 
         // Only succeeds from NONE — no combos this session. Crouch attacks require the player to
-        // actually be in CROUCH; every other state (standing attacks, dodge) requires standing
-        // (IDLE/WALK/RUN) — no air attacks/dodge, no attacking mid-crouch-transition either.
+        // actually be in CROUCH; JUMP_KICK requires actually being airborne (JUMP/FALL); every
+        // other state (standing attacks, dodge) requires standing (IDLE/WALK/RUN) — no dodge
+        // in the air, no attacking mid-crouch-transition either.
         public bool TryEnterState(string stateId)
         {
             if (currentStateId != "NONE") return false;
 
             var locomotionId = locomotion.CurrentStateId;
-            var allowed = IsCrouchAttack(stateId) ? locomotionId == "CROUCH" : IsGroundedLocomotion(locomotionId);
+            bool allowed;
+            if (IsCrouchAttack(stateId)) allowed = locomotionId == "CROUCH";
+            else if (IsAerialAttack(stateId)) allowed = IsAirborneLocomotion(locomotionId);
+            else allowed = IsGroundedLocomotion(locomotionId);
             if (!allowed) return false;
 
             ChangeState(stateId);
@@ -89,7 +95,12 @@ namespace KungFuVania.Player
         private static bool IsGroundedLocomotion(string locomotionStateId) =>
             locomotionStateId == "IDLE" || locomotionStateId == "WALK" || locomotionStateId == "RUN";
 
+        private static bool IsAirborneLocomotion(string locomotionStateId) =>
+            locomotionStateId == "JUMP" || locomotionStateId == "FALL";
+
         private static bool IsCrouchAttack(string stateId) =>
             stateId == "CROUCH_ATTACK_1" || stateId == "CROUCH_ATTACK_2";
+
+        private static bool IsAerialAttack(string stateId) => stateId == "JUMP_KICK";
     }
 }
