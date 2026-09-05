@@ -1090,6 +1090,9 @@ GameObject:
   - component: {fileID: 873162354}
   - component: {fileID: 873162360}
   - component: {fileID: 873162359}
+  - component: {fileID: 873162363}
+  - component: {fileID: 873162362}
+  - component: {fileID: 873162361}
   m_Layer: 11
   m_Name: TrainingDummy
   m_TagString: Untagged
@@ -1109,7 +1112,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0b5af75a67a6625458da4df178f0e16a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.TrainingDummy
-  maxHealth: 50
   spriteRenderer: {fileID: 873162357}
   idleSprite: {fileID: 21300000, guid: bce1d438e7d81db469842efd1c6936df, type: 3}
   struckHighSprite: {fileID: 21300000, guid: 19c02673bebbc9444916136126dee9f4, type: 3}
@@ -1291,6 +1293,48 @@ Rigidbody2D:
   m_SleepingMode: 1
   m_CollisionDetection: 0
   m_Constraints: 0
+--- !u!114 &873162361
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 873162353}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1d1eaa85524bb3742acdb78e06b2a483, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.EnemyHealthBar
+  size: {x: 1, y: 0.15}
+  borderThickness: 0.025
+  yOffset: 2.2
+--- !u!114 &873162362
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 873162353}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 364f4f12dc1adc943b71938aa48bc51a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.HealOverTime
+  delayAfterDamage: 3
+  healPerSecond: 5
+--- !u!114 &873162363
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 873162353}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c42ac3592f54e4d49ad1da9c1f09bd57, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.Health
+  maxHealth: 50
 --- !u!1 &913269940
 GameObject:
   m_ObjectHideFlags: 0

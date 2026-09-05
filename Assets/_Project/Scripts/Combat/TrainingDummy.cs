@@ -5,7 +5,6 @@ namespace KungFuVania.Combat
     [RequireComponent(typeof(HurtboxController))]
     public class TrainingDummy : MonoBehaviour
     {
-        [SerializeField] private float maxHealth = 50f;
         [SerializeField] private SpriteRenderer spriteRenderer;
         [SerializeField] private Sprite idleSprite;
         // All attacks are high hits for now — no low attacks or crouch exist yet to trigger a
@@ -13,14 +12,12 @@ namespace KungFuVania.Combat
         [SerializeField] private Sprite struckHighSprite;
         [SerializeField] private float struckPoseDuration = 0.2f;
 
-        private float currentHealth;
         private HurtboxController hurtbox;
         private float struckUntil;
 
         private void Awake()
         {
             hurtbox = GetComponent<HurtboxController>();
-            currentHealth = maxHealth;
         }
 
         private void OnEnable() => hurtbox.OnHit += HandleHit;
@@ -34,12 +31,8 @@ namespace KungFuVania.Combat
 
         private void HandleHit(float damage)
         {
-            currentHealth -= damage;
             struckUntil = Time.time + struckPoseDuration;
             if (spriteRenderer != null) spriteRenderer.sprite = struckHighSprite;
-
-            if (currentHealth <= 0f)
-                currentHealth = maxHealth;
         }
     }
 }
