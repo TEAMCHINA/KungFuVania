@@ -21,7 +21,13 @@ namespace KungFuVania.Player.Locomotion
             var direction = horizontal > 0f ? 1f : horizontal < 0f ? -1f : 0f;
             Controller.SetMoveIntent(direction, Controller.IsRunning);
 
-            if (!Controller.IsGrounded()) return;
+            if (!Controller.IsGrounded())
+            {
+                if (direction != 0f && Controller.GetVelocity().y <= 0f && Controller.IsTouchingWall(direction))
+                    machine.ChangeState("WALL_SLIDE");
+
+                return;
+            }
 
             EventBus.Publish(new OnPlayerLanded());
 

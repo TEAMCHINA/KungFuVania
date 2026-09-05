@@ -19,6 +19,9 @@ namespace KungFuVania.Player
         [SerializeField] private int jumpCharges = 0;
         [SerializeField] private float doubleTapWindow = 0.25f;
         [SerializeField] private float groundCheckRadius = 0.1f;
+        [SerializeField] private Transform wallCheck;
+        [SerializeField] private float wallCheckDistance = 0.4f;
+        [SerializeField] private float wallSlideSpeed = 2f;
 
         private Rigidbody2D rb;
         private PlayerStateMachine stateMachine;
@@ -42,6 +45,7 @@ namespace KungFuVania.Player
             get => jumpCharges;
             set => jumpCharges = value;
         }
+        public float WallSlideSpeed => wallSlideSpeed;
 
         private void Awake()
         {
@@ -113,6 +117,20 @@ namespace KungFuVania.Player
 
         public void ApplyImpulse(Vector2 force) => rb.AddForce(force, ForceMode2D.Impulse);
         public void SetVerticalVelocity(float verticalVelocity) => rb.linearVelocity = new Vector2(rb.linearVelocity.x, verticalVelocity);
+
+        public void ClampFallSpeed(float maxFallSpeed)
+        {
+            if (rb.linearVelocity.y < -maxFallSpeed)
+                rb.linearVelocity = new Vector2(rb.linearVelocity.x, -maxFallSpeed);
+        }
+
+        public bool IsTouchingWall(float direction)
+        {
+            if (direction == 0f) return false;
+            var dir = direction > 0f ? Vector2.right : Vector2.left;
+            return Physics2D.Raycast(wallCheck.position, dir, wallCheckDistance, groundLayer).collider != null;
+        }
+
         public void ForceLocomotionState(string stateId) => stateMachine.ForceState(stateId);
         public Vector2 GetVelocity() => rb.linearVelocity;
         public bool IsGrounded() => isGrounded;

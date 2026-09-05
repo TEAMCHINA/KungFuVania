@@ -253,8 +253,8 @@ Transform:
   m_GameObject: {fileID: 93900249}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -0.7328, y: -0.35, z: 0}
-  m_LocalScale: {x: 14.336358, y: 1, z: 1}
+  m_LocalPosition: {x: 0.0341, y: -0.62, z: 0}
+  m_LocalScale: {x: 15.625196, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -452,8 +452,12 @@ MonoBehaviour:
   runSpeedMultiplier: 1.6
   jumpImpulseForce: 12
   jumpCutMultiplier: 0.5
+  jumpCharges: 0
   doubleTapWindow: 0.25
   groundCheckRadius: 0.1
+  wallCheck: {fileID: 1551235991}
+  wallCheckDistance: 0.4
+  wallSlideSpeed: 2
 --- !u!114 &542349633
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -604,6 +608,7 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 913269941}
+  - {fileID: 1551235991}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &542349638
@@ -816,8 +821,8 @@ Transform:
   m_GameObject: {fileID: 649044010}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 7.9, y: 0.9836, z: 0}
-  m_LocalScale: {x: 2.8857546, y: 1.6256, z: 1}
+  m_LocalPosition: {x: 8.5441, y: 0.9305, z: 0}
+  m_LocalScale: {x: 1.5975537, y: 1.9846951, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -1091,8 +1096,8 @@ Transform:
   m_GameObject: {fileID: 1011980999}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -8.5396, y: 0.51, z: 0}
-  m_LocalScale: {x: 1.0408, y: 0.7, z: 1}
+  m_LocalPosition: {x: -8.59, y: 0.11, z: 0}
+  m_LocalScale: {x: 1.526566, y: 0.7, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -1169,6 +1174,37 @@ SpriteRenderer:
   m_WasSpriteAssigned: 1
   m_SpriteSortPoint: 0
   m_BlendShapeWeights: []
+--- !u!1 &1551235990
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1551235991}
+  m_Layer: 0
+  m_Name: wallCheck
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1551235991
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1551235990}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0.75, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 542349637}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1720198476
 GameObject:
   m_ObjectHideFlags: 0
@@ -1179,7 +1215,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1720198478}
   - component: {fileID: 1720198477}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: RightWall
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -1257,7 +1293,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1939932867}
   - component: {fileID: 1939932866}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: LeftWall
   m_TagString: Untagged
   m_Icon: {fileID: 0}
