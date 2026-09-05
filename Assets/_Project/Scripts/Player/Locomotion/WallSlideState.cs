@@ -16,6 +16,10 @@ namespace KungFuVania.Player.Locomotion
         public void Enter()
         {
             Controller.SetMoveIntent(0f, false);
+
+            var horizontal = Controller.MoveInput.x;
+            var direction = horizontal > 0f ? 1f : horizontal < 0f ? -1f : 0f;
+            Controller.NotifyWallContact(Controller.GetTouchedWall(direction));
         }
 
         public void Tick(float deltaTime)

@@ -22,6 +22,16 @@ namespace KungFuVania.Player
         [SerializeField] private Transform wallCheck;
         [SerializeField] private float wallCheckDistance = 0.4f;
         [SerializeField] private float wallSlideSpeed = 2f;
+        // Consecutive wall jumps off the SAME wall before landing or touching a different wall
+        // is required to recharge. 0 = ability not yet acquired (default, unchanged feel).
+        // Bump this in the Inspector to test wall jump; will later be driven by gear/skills,
+        // same manual-testing pattern as jumpCharges.
+        [SerializeField] private int maxWallJumps = 0;
+        [SerializeField] private Vector2 wallJumpVelocity = new Vector2(8f, 12f);
+        // Brief lockout after a wall jump during which held input doesn't override the outward
+        // launch velocity — without it, still holding "into" the wall (as wall-sliding requires)
+        // would cancel the horizontal kick on the very next physics step.
+        [SerializeField] private float wallStickTime = 0.2f;
 
         private Rigidbody2D rb;
         private PlayerStateMachine stateMachine;
@@ -30,6 +40,9 @@ namespace KungFuVania.Player
         private float moveIntent;
         private bool runIntent;
         private int remainingJumpCharges;
+        private int remainingWallJumps;
+        private Collider2D lastWallTouched;
+        private float wallJumpLockUntil;
 
         private int previousSign;
         private int pendingTapDirection;
@@ -46,6 +59,11 @@ namespace KungFuVania.Player
             set => jumpCharges = value;
         }
         public float WallSlideSpeed => wallSlideSpeed;
+        public int MaxWallJumps
+        {
+            get => maxWallJumps;
+            set => maxWallJumps = value;
+        }
 
         private void Awake()
         {
@@ -71,7 +89,13 @@ namespace KungFuVania.Player
         {
             isGrounded = Physics2D.OverlapCircle(groundCheck.position, groundCheckRadius, groundLayer);
             if (isGrounded)
+            {
                 remainingJumpCharges = jumpCharges;
+                remainingWallJumps = maxWallJumps;
+                lastWallTouched = null;
+            }
+
+            if (Time.time < wallJumpLockUntil) return;
 
             var speed = runIntent ? walkSpeed * runSpeedMultiplier : walkSpeed;
             rb.linearVelocity = new Vector2(moveIntent * speed, rb.linearVelocity.y);
@@ -124,11 +148,38 @@ namespace KungFuVania.Player
                 rb.linearVelocity = new Vector2(rb.linearVelocity.x, -maxFallSpeed);
         }
 
-        public bool IsTouchingWall(float direction)
+        public Collider2D GetTouchedWall(float direction)
         {
-            if (direction == 0f) return false;
+            if (direction == 0f) return null;
             var dir = direction > 0f ? Vector2.right : Vector2.left;
-            return Physics2D.Raycast(wallCheck.position, dir, wallCheckDistance, groundLayer).collider != null;
+            return Physics2D.Raycast(wallCheck.position, dir, wallCheckDistance, groundLayer).collider;
+        }
+
+        public bool IsTouchingWall(float direction) => GetTouchedWall(direction) != null;
+
+        // Restores the wall-jump charge only when the wall itself is new (a different collider,
+        // or none touched since the last landing) — repeatedly re-clinging to the SAME wall
+        // without landing or touching another wall does not refill it. See maxWallJumps.
+        public void NotifyWallContact(Collider2D wall)
+        {
+            if (wall == null || wall == lastWallTouched) return;
+
+            remainingWallJumps = maxWallJumps;
+            lastWallTouched = wall;
+        }
+
+        public bool TryWallJump()
+        {
+            if (remainingWallJumps <= 0) return false;
+
+            var horizontal = MoveInput.x;
+            var wallDirection = horizontal > 0f ? 1f : horizontal < 0f ? -1f : 0f;
+            if (wallDirection == 0f) return false;
+
+            remainingWallJumps--;
+            rb.linearVelocity = new Vector2(-wallDirection * wallJumpVelocity.x / Mass, wallJumpVelocity.y / Mass);
+            wallJumpLockUntil = Time.time + wallStickTime;
+            return true;
         }
 
         public void ForceLocomotionState(string stateId) => stateMachine.ForceState(stateId);

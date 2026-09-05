@@ -41,12 +41,16 @@ public void ChangeState(string stateId)
         {
             if (stateId == currentStateId) return;
 
+            SwitchTo(stateId);
+            currentState.Enter();
+            EventBus.Publish(new PlayerStateChanged { StateId = stateId });
+        }
+
+        private void SwitchTo(string stateId)
+        {
             currentState?.Exit();
             currentStateId = stateId;
             currentState = states[stateId];
-            currentState.Enter();
-
-            EventBus.Publish(new PlayerStateChanged { StateId = stateId });
         }
 
         public void ForceState(string stateId) => ChangeState(stateId);
@@ -57,6 +61,20 @@ public void ChangeState(string stateId)
             {
                 if (currentStateId != "JUMP")
                     ChangeState("JUMP");
+                return;
+            }
+
+            if (currentStateId == "WALL_SLIDE")
+            {
+                // Jump means wall-jump exclusively while clinging — falling back to a generic
+                // aerial charge-jump here would launch straight up while still held into the
+                // wall, scraping along its face instead of launching away from it. No wall-jump
+                // charge just means no jump yet, same as maxWallJumps = 0 meaning "not acquired".
+                if (controller.TryWallJump())
+                {
+                    SwitchTo("JUMP");
+                    EventBus.Publish(new PlayerStateChanged { StateId = "JUMP" });
+                }
                 return;
             }
 

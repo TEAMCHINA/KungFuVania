@@ -458,6 +458,9 @@ MonoBehaviour:
   wallCheck: {fileID: 1551235991}
   wallCheckDistance: 0.4
   wallSlideSpeed: 2
+  maxWallJumps: 0
+  wallJumpVelocity: {x: 8, y: 12}
+  wallStickTime: 0.2
 --- !u!114 &542349633
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -821,8 +824,8 @@ Transform:
   m_GameObject: {fileID: 649044010}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 8.5441, y: 0.9305, z: 0}
-  m_LocalScale: {x: 1.5975537, y: 1.9846951, z: 1}
+  m_LocalPosition: {x: 8.5693, y: 0.9305, z: 0}
+  m_LocalScale: {x: 1.5470402, y: 1.9846951, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}

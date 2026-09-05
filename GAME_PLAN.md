@@ -1165,8 +1165,10 @@ Uses its own charge pool so unlocking/equipping one never grants the other; the 
 designed to combine, not gate each other (see Sequence Breaks below).
 
 ```csharp
-int     maxWallJumps       // base value, default 1 — consecutive wall jumps off the SAME wall
-                            // without an intervening ground touch or contact with another wall
+int     maxWallJumps       // base value, default 0 until the ability/gear is acquired (matches
+                            // PlayerController.JumpCharges' manual-testing pattern) — consecutive
+                            // wall jumps off the SAME wall without an intervening ground touch or
+                            // contact with another wall
 int     remainingWallJumps // runtime counter; restored on landing or on contacting a new wall
 float   wallSlideSpeed     // max downward speed while WALL_SLIDE is held (clamped, not instant)
 Vector2 wallJumpVelocity   // (outward.x, upward.y) — launches away from the wall, not straight up
@@ -3838,7 +3840,3 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 
 - **Parallax background layers** (§3t) — blocked on `CameraManager`/`CameraTarget` actually
   moving; see the note in Camera System above.
-- **Wall Jump / `WALL_SLIDE`** (§2, §3k) — designed, not yet implemented. Next up: `WALL_SLIDE`
-  locomotion state plus a `wallJumpCharges`-style property, mirroring how `PlayerController`
-  currently exposes `JumpCharges` for double/triple jump. Independent charge pool from
-  double/triple jump — see the Sequence Breaks note in 3k.
