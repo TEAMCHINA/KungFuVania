@@ -1695,6 +1695,15 @@ to `DamageCalculator` and no flags to check anywhere.
 - **DOWN_RECOVERY** — get-up animation fires `OnInvulnerableStart` on frame 0 of DOWN_RECOVERY
   and `OnInvulnerableEnd` a few frames later, preventing immediate re-combo off a knockdown.
   Duration is authored per-actor in the animation clip.
+- **HURT state — player only** — calls `SetInvulnerable(true)` on entering `HURT`,
+  `SetInvulnerable(false)` on exiting it. Enemies do **not** get this: enemy `HURT` stays fully
+  hittable so a multi-hit player attack (punch-punch-kick, knee-to-kick) lands every hit in
+  sequence instead of bouncing off invincibility after the first. For the player, this is the
+  juggle-lock fix — a crowd of attackers caps out at one hit landing before the reel ends, instead
+  of chain-stunning into a loss of control. Two attackers landing in the same physics step, before
+  the gate can react, is an accepted rare edge case rather than something the resolution model
+  dedups for. Implemented as an opt-in behavior on the player (not a hardcoded type check), so an
+  allied NPC could get the same protection later if one is ever added.
 
 **Reference counting contract:** each `SetInvulnerable(true)` call must be paired with exactly
 one `SetInvulnerable(false)`. The body object re-activates only when the count reaches zero —
