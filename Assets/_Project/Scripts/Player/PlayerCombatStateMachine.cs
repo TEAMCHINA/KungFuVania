@@ -32,6 +32,12 @@ namespace KungFuVania.Player
         private ICombatState currentState;
         private string currentStateId;
 
+        // Default-effect -> override, e.g. weapon-granted attack data. Empty until something
+        // actually calls SetAttackOverride — no weapon means ResolveHitboxData is a pure
+        // passthrough.
+        private readonly Dictionary<HitboxDataSO, HitboxDataSO> weaponOverrides = new();
+        private RuntimeAnimatorController defaultAnimatorController;
+
         private PlayerStateMachine locomotion;
 
         public PlayerController Controller { get; private set; }
@@ -39,25 +45,57 @@ namespace KungFuVania.Player
         public HitboxController HitboxController => hitboxController;
         public HurtboxController HurtboxController => hurtboxController;
         public string CurrentStateId => currentStateId;
+        public HitboxDataSO PunchData => punchData;
+        public HitboxDataSO KickData => kickData;
+        public HitboxDataSO CrouchPunchData => crouchPunchData;
+        public HitboxDataSO CrouchKickData => crouchKickData;
+        public HitboxDataSO JumpPunchData => jumpPunchData;
+        public HitboxDataSO JumpKickData => jumpKickData;
 
         private void Awake()
         {
             Controller = GetComponent<PlayerController>();
             Animator = GetComponent<Animator>();
+            defaultAnimatorController = Animator.runtimeAnimatorController;
             locomotion = GetComponent<PlayerStateMachine>();
 
             states["NONE"] = new NoneState();
-            states["ATTACK_1"] = new AttackState(this, punchData, "ATTACK_1");
-            states["ATTACK_2"] = new AttackState(this, kickData, "ATTACK_2");
-            states["CROUCH_ATTACK_1"] = new AttackState(this, crouchPunchData, "CROUCH_ATTACK_1");
-            states["CROUCH_ATTACK_2"] = new AttackState(this, crouchKickData, "CROUCH_ATTACK_2");
-            states["JUMP_KICK"] = new AttackState(this, jumpKickData, "JUMP_KICK", exitOnLanding: true);
-            states["JUMP_PUNCH"] = new AttackState(this, jumpPunchData, "JUMP_PUNCH", exitOnLanding: true);
+            states["ATTACK_1"] = new AttackState(this, () => ResolveHitboxData(punchData), "ATTACK_1");
+            states["ATTACK_2"] = new AttackState(this, () => ResolveHitboxData(kickData), "ATTACK_2");
+            states["CROUCH_ATTACK_1"] = new AttackState(this, () => ResolveHitboxData(crouchPunchData), "CROUCH_ATTACK_1");
+            states["CROUCH_ATTACK_2"] = new AttackState(this, () => ResolveHitboxData(crouchKickData), "CROUCH_ATTACK_2");
+            states["JUMP_ATTACK_2"] = new AttackState(this, () => ResolveHitboxData(jumpKickData), "JUMP_ATTACK_2", exitOnLanding: true);
+            states["JUMP_ATTACK_1"] = new AttackState(this, () => ResolveHitboxData(jumpPunchData), "JUMP_ATTACK_1", exitOnLanding: true);
             states["DASH_FORWARD"] = new DodgeState(this, dodgeTotalDuration, () => Controller.ForwardDashDistance, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask);
             states["DASH_BACK"] = new DodgeState(this, dodgeTotalDuration, () => Controller.BackDashDistance, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask, reverseDirection: true);
             states["DODGE_ROLL"] = new DodgeState(this, dodgeTotalDuration * dodgeRollDurationMultiplier, () => Controller.DodgeDistance, dodgeIFrameStart, dodgeIFrameEnd * dodgeRollDurationMultiplier, dodgeObstructionMask);
             states["DODGE_RECOVERY"] = new DodgeRecoveryState(this, dodgeRecoveryDuration);
         }
+
+        // Scoped-down stand-in for the effect-override resolution designed in GAME_PLAN.md §3j
+        // (OverrideEffectModifierSO) — same "default -> override" shape, just populated directly
+        // by whatever grants a weapon today instead of StatSheet's ModifierAggregate, since
+        // neither StatSheet nor EquipmentManager exist yet. Centralizing the lookup here means
+        // wiring in the real override chain later only touches this one method, not every
+        // AttackState construction site above.
+        private HitboxDataSO ResolveHitboxData(HitboxDataSO defaultData) =>
+            weaponOverrides.TryGetValue(defaultData, out var overrideData) ? overrideData : defaultData;
+
+        // defaultData must be one of the six HitboxDataSO fields above (see the PunchData/KickData/
+        // etc. getters) — it's the dictionary key ResolveHitboxData looks up against.
+        public void SetAttackOverride(HitboxDataSO defaultData, HitboxDataSO overrideData) =>
+            weaponOverrides[defaultData] = overrideData;
+
+        public void ClearAttackOverride(HitboxDataSO defaultData) =>
+            weaponOverrides.Remove(defaultData);
+
+        // Swaps every clip in one shot via an AnimatorOverrideController (same state names/
+        // transitions as the base controller, different clips per state) — animation-only, no
+        // effect on damage. Pass null to fall back to the default controller captured in Awake.
+        public void SetAnimatorOverride(RuntimeAnimatorController overrideController) =>
+            Animator.runtimeAnimatorController = overrideController != null ? overrideController : defaultAnimatorController;
+
+        public void ClearAnimatorOverride() => Animator.runtimeAnimatorController = defaultAnimatorController;
 
         private void Start()
         {
@@ -76,7 +114,7 @@ namespace KungFuVania.Player
         }
 
         // Only succeeds from NONE — no combos this session. Crouch attacks require the player to
-        // actually be in CROUCH; JUMP_KICK requires actually being airborne (JUMP/FALL); every
+        // actually be in CROUCH; jump attacks require actually being airborne (JUMP/FALL); every
         // other state (standing attacks, dodge) requires standing (IDLE/WALK/RUN) — no dodge
         // in the air, no attacking mid-crouch-transition either.
         public bool TryEnterState(string stateId)
@@ -115,6 +153,6 @@ namespace KungFuVania.Player
         private static bool IsCrouchAttack(string stateId) =>
             stateId == "CROUCH_ATTACK_1" || stateId == "CROUCH_ATTACK_2";
 
-        private static bool IsAerialAttack(string stateId) => stateId == "JUMP_KICK" || stateId == "JUMP_PUNCH";
+        private static bool IsAerialAttack(string stateId) => stateId == "JUMP_ATTACK_1" || stateId == "JUMP_ATTACK_2";
     }
 }

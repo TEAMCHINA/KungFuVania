@@ -7,27 +7,30 @@ namespace KungFuVania.Player.Combat
     public class AttackState : ICombatState
     {
         private readonly PlayerCombatStateMachine machine;
-        private readonly HitboxDataSO hitboxData;
+        private readonly System.Func<HitboxDataSO> resolveHitboxData;
         private readonly string animStateId;
         private readonly bool exitOnLanding;
 
-        // exitOnLanding: for aerial attacks only (e.g. JUMP_KICK) — landing mid-clip makes
+        // exitOnLanding: for aerial attacks only (e.g. JUMP_ATTACK_2) — landing mid-clip makes
         // PlayerAnimatorDriver force-play "LANDING" (see OnPlayerLanded), so the Animator will
         // never report this clip as finished. Without this, the combat state machine would stay
         // stuck here forever since its only other exit check is the clip reaching normalizedTime
         // 1. Grounded attacks never need this — they always start out already grounded, so the
         // check would fire on their very first Tick and cancel every ground attack immediately.
-        public AttackState(PlayerCombatStateMachine machine, HitboxDataSO hitboxData, string animStateId, bool exitOnLanding = false)
+        public AttackState(PlayerCombatStateMachine machine, System.Func<HitboxDataSO> resolveHitboxData, string animStateId, bool exitOnLanding = false)
         {
             this.machine = machine;
-            this.hitboxData = hitboxData;
+            this.resolveHitboxData = resolveHitboxData;
             this.animStateId = animStateId;
             this.exitOnLanding = exitOnLanding;
         }
 
+        // Resolved fresh on every Enter, same pattern DodgeState already uses for its distance —
+        // see PlayerCombatStateMachine.ResolveHitboxData for why this is a resolver rather than a
+        // value captured once at construction.
         public void Enter()
         {
-            machine.HitboxController.activeHitboxData = hitboxData;
+            machine.HitboxController.activeHitboxData = resolveHitboxData();
         }
 
         public void Tick(float deltaTime)

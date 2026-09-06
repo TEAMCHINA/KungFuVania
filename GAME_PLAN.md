@@ -25,10 +25,14 @@ Assets/
 │   │   │                   AnimatorSpeedSync, CameraTarget
 │   │   ├── Combat/         HitboxController, HurtboxController, ComboSystem, ParrySystem,
 │   │   │                   DodgeSystem, DamageCalculator, StaggerMeter, InputBuffer,
-│   │   │                   MotionInputBuffer, MotionInputDetector
+│   │   │                   MotionInputDetector
+│   │   ├── Projectiles/    ProjectileController, ProjectileManager, ProjectileHitBehaviorSO,
+│   │   │                   ProjectileMultiSpawnSO
 │   │   ├── Auras/          AuraManager, AuraVisualController, GameTickManager, ActiveAura
 │   │   ├── Stats/          StatSheet, StatRegistry
-│   │   ├── Abilities/      AbilityBase, AbilityExecutionContext, AbilityModifierSO, EquipmentManager
+│   │   ├── Abilities/      TriggerSO, EffectSO, TriggerEffectSO, MotionInputTriggerSO,
+│   │   │                   AbilityEffectSO, AbilityExecutionContext, AbilityModifierSO,
+│   │   │                   NumericModifierSO, EquipmentManager
 │   │   ├── MovementAbilities/ DoubleJumpAbility, AirDashAbility, GrappleAbility
 │   │   ├── Cosmetics/      CharacterCustomizationController, CosmeticRegistry
 │   │   ├── NPCs/           NPCController
@@ -43,7 +47,7 @@ Assets/
 │   │   └── ScriptableObjects/
 │   │       ├── Abilities/
 │   │       ├── AbilityModifiers/
-│   │       ├── MotionInputs/       MotionPatternSO assets, StickInputConfigSO
+│   │       ├── MotionInputs/       TriggerEffectSO/MotionInputTriggerSO assets, StickInputConfigSO
 │   │       ├── Auras/
 │   │       ├── Cosmetics/      CosmeticSlotSO assets, CosmeticOptionSO assets, CosmeticRegistry
 │   │       ├── Enemies/
@@ -1030,12 +1034,49 @@ void IncrementStat(PrimaryStatType stat, int points)
 enum PrimaryStatType { Strength, Chi, Dexterity, Constitution }
 ```
 
+#### Capability & Damage Modifiers
+
+Separate from `StatBonus` above, deliberately — `StatBonus` covers a small, fixed set of named
+primary/derived stat bonuses; this covers open-ended categories that keep growing throughout
+development (new charge types, new elements, new ability-specific bonuses) without ever wanting
+a new struct field added per one. Both live on `StatSheet`, both follow the same "recompute once
+when something changes, never per read" discipline — they're shaped differently because the
+problems are different shapes, not because one is more "correct."
+
+```csharp
+enum ModifierCategory { Charge, ElementalDamage, AbilityDamage }
+enum ChargeType        { AerialJump, WallJump, Dash }   // grows rarely, one line at a time
+enum DamageElement     { Physical, Fire, Ice }           // same
+```
+
+`StatSheet` carries the aggregate itself (`ModifierAggregate`, populated per §3j):
+
+```csharp
+Dictionary<ChargeType, int>         chargeBonuses
+Dictionary<DamageElement, float>    elementalDamageBonus     // e.g. 0.10 = +10%, additive within element
+Dictionary<AbilityEffectSO, float>  abilityDamageBonus       // e.g. 1.0 = +100%, additive per ability
+```
+
+Recomputed from scratch — not incrementally added/subtracted — whenever the underlying source
+list changes: an item equipped or unequipped, an aura applied or removed, an ability unlocked.
+Equipment is not the only source; see §3j for what actually populates this and §3l for how
+unlocked (rather than equipped) sources feed the same aggregate.
+
+**Read pattern matches `StatSheet`'s existing primary-stat formula exactly** — `baseValue +
+bonus`, same as `Strength => baseValue + equipmentBonuses.strength` already works today. Charges
+default to a base of 0 (no aerial jump, no wall jump, until something grants one), so consumers
+just read the aggregate directly — `PlayerController.TryWallJump()` reads
+`statSheet.chargeBonuses.GetValueOrDefault(ChargeType.WallJump)` at the point of use instead of a
+flat Inspector field. Nothing about `TryWallJump()`'s own logic branches on charge type — it only
+ever reads its own slot, same as if that number were still a serialized field. A new charge type
+never touches existing consumer code; a new consumer never touches the aggregate.
+
 ---
 
 ### 3j. Ability Execution Pipeline
 
 Abilities are fully data-driven and unaware of how equipment or upgrades might modify them.
-At execution time, a default context is built from the ability's own data, passed through
+At execution time, a default context is built from the effect's own data, passed through
 a modifier pipeline registered by `EquipmentManager`, and then executed against the
 final mutated values.
 
@@ -1044,7 +1085,7 @@ final mutated values.
 Plain mutable C# class (not a ScriptableObject — created and discarded per execution):
 
 ```csharp
-// Damage formula inputs (defaults from AbilitySO / HitboxDataSO, freely mutable)
+// Damage formula inputs (defaults from AbilityEffectSO / HitboxDataSO, freely mutable)
 float  strengthWeight
 float  chiWeight
 float  weaponWeight
@@ -1059,10 +1100,13 @@ float  hitstunDuration          // can be extended or reduced by modifiers
 List<AuraSO> onHitAuras       // applied to target on each hit
 AuraSO       selfAuraOnHit      // applied to caster on hit (null = none)
 
-// Read-only references (modifiers may read these to compute values)
+// Read-only reference (modifiers may read this to compute values)
 StatSheet    casterStats
-string       abilityId
 ```
+
+No `abilityId` field — see §3l, `TriggerEffectSO`/`AbilityEffectSO` are real object references
+now, not strings, so `EquipmentManager` keys its registries on the effect object directly
+(below) rather than needing an ID stored back on the context.
 
 **Decided: snapshot, don't hold a live reference, for anything that can resolve later.** A melee
 hit resolves the same frame `BuildContext` runs, so reading `casterStats` live costs nothing. A
@@ -1077,27 +1121,65 @@ in this project that detaches from its creator and acts later, not just projecti
 
 #### AbilityModifierSO
 
-Abstract ScriptableObject. Item and upgrade designers subclass this — one class per modifier
-type. The ability pipeline calls `Modify(ctx)` on each registered modifier in order:
+Abstract ScriptableObject. Contributes to `StatSheet`'s `ModifierAggregate` (§3i) once,
+whenever the active modifier list changes — **not** invoked at ability execution time. Earlier
+drafts of this pipeline called `Modify(ctx)` on every registered modifier on every single hit,
+which is exactly the "recompute on every read instead of on change" pattern avoided everywhere
+else in this design. Recomputing once per equip/unequip/aura-change/unlock and reading a plain
+precomputed value at execution time removes a live iteration from the hottest path in combat.
 
 ```csharp
-public abstract void Modify(AbilityExecutionContext ctx);
+public abstract void ContributeTo(ModifierAggregate aggregate, AbilityEffectSO targetEffect);
 ```
 
-**Example concrete modifier types:**
+**Two families, split by whether the contribution is a number or a behavior.**
 
-| Class | What it does to context |
+`NumericModifierSO` — one concrete class, never subclassed. Designers create *instances* of it
+directly. Covers every purely-additive case — charges, elemental damage, per-ability damage:
+
+```csharp
+public class NumericModifierSO : AbilityModifierSO {
+    ModifierCategory category;
+    ChargeType       chargeTarget;    // relevant when category == Charge
+    DamageElement    elementTarget;   // relevant when category == ElementalDamage
+    // targetEffect (passed into ContributeTo) is the target when category == AbilityDamage
+    float            value;
+}
+```
+
+Its `ContributeTo` is the same few lines regardless of what a designer authors — write `value`
+into `aggregate.chargeBonuses[chargeTarget]`, `aggregate.elementalDamageBonus[elementTarget]`,
+or `aggregate.abilityDamageBonus[targetEffect]` depending on `category`. "+1 wall jump charge,"
+"+10% fire damage," "+100% Hadouken damage" are all just instances of this one class with
+different field values — zero new code, ever, as long as the target category/enum value already
+exists (see §3i). A genuinely new category (a new `ChargeType`/`DamageElement` value) is a
+one-line, isolated addition, not a new class, and only needs to happen once per new *concept* —
+never again per new item that grants it.
+
+The remaining family is genuine behavior swaps — not reducible to a number, so each still needs
+its own subclass, same "new subclass, zero changes elsewhere" property as everything else
+composed in this design:
+
+| Class | What it does |
 |---|---|
-| `DamageMultiplierModifierSO` | `ctx.baseMultiplier *= multiplier` |
-| `AddHitModifierSO` | `ctx.hitCount += count` |
-| `ApplyAuraOnHitModifierSO` | `ctx.onHitAuras.Add(aura)` |
-| `ShiftStatWeightModifierSO` | adjusts chi/strength/weapon weights (e.g. make flying kick chi-scaled) |
-| `ExtendHitstunModifierSO` | `ctx.hitstunDuration += seconds` |
-| `ApplySelfAuraOnHitModifierSO` | `ctx.selfAuraOnHit = aura` |
-| `ChargeCountModifierSO` | contributes `bonusCharges` to `EquipmentManager.GetChargeBonus(abilityId)` — affects charge-based abilities (double jump, air dash) at reset time, not execution time |
+| `ApplyAuraOnHitModifierSO` | contributes an aura to `aggregate.onHitAurasFor[targetEffect]` |
+| `ApplySelfAuraOnHitModifierSO` | contributes an aura to `aggregate.selfAuraOnHitFor[targetEffect]` |
+| `ExtendHitstunModifierSO` | contributes seconds to `aggregate.bonusHitstunFor[targetEffect]` |
+| `AddHitModifierSO` | contributes to `aggregate.bonusHitCountFor[targetEffect]` |
+| `ShiftStatWeightModifierSO` | adjusts chi/strength/weapon weighting for a specific effect (e.g. make flying kick chi-scaled) |
+| `OverrideProjectileHitBehaviorModifierSO` | swaps `ProjectileHitBehaviorSO` for a projectile-spawning effect (§3l) — e.g. gloves that make a fireball pierce instead of despawning on first contact. Sibling fields for size/range overrides on the same modifier once `AbilityExecutionContext` actually carries projectile fields — noted as a gap, not built |
+| `OverrideEffectModifierSO` | swaps which `EffectSO` fires for a given trigger entirely — e.g. boots that turn a melee roundhouse into a thrown fireball. Checked at the point an effect would otherwise fire (§3l's trie completion, for motion-triggered abilities); no match falls through to the original effect unchanged |
 
-New modifier behaviors never require touching ability code — create a new subclass and assign
-it to an item asset.
+New qualitative behaviors still need a programmer to write a new subclass — inherent to inventing
+a mechanic that isn't just a number, not a process failure. It's a one-time cost per *kind* of
+behavior, never per item that grants it. Item and upgrade designers assign instances of either
+family to item/passive assets — the aggregation pass never needs to know which kind it's
+looking at, it just calls `ContributeTo` on everything in the list.
+
+**Gap, not yet resolved:** `aggregate.elementalDamageBonus` needs an attack's damage element to
+apply against, and nothing carries one yet — `HitboxDataSO` has no `DamageElement` field today,
+so every attack is implicitly `Physical`. Small, mechanical addition when elemental damage
+actually gets built; not blocking anything designed so far.
 
 #### EquipmentManager
 
@@ -1105,39 +1187,51 @@ Singleton (or ServiceLocator-resolved) component on the player. Owns the modifie
 and handles equip/unequip lifecycle:
 
 ```csharp
-// Registry: abilityId → modifiers contributed by currently equipped items
-Dictionary<string, List<AbilityModifierSO>> modifiersByAbilityId
+// Registry: which AbilityEffectSO → modifiers contributed by currently equipped items
+Dictionary<AbilityEffectSO, List<AbilityModifierSO>> modifiersByEffect
 
-// Charge bonus registry: abilityId → total bonus charges from all equipped items
-// Updated incrementally on equip/unequip — not recomputed each frame
-Dictionary<string, int> chargeBonuses
+void RegisterModifiers(EquipmentSO item)     // called on equip
+void UnregisterModifiers(EquipmentSO item)   // called on unequip
 
-void RegisterModifiers(EquipmentSO item)          // called on equip; also adds ChargeCountModifierSO contributions to chargeBonuses
-void UnregisterModifiers(EquipmentSO item)         // called on unequip; subtracts contributions
+// Rebuilds StatSheet's ModifierAggregate from scratch — not incrementally — using every
+// currently-registered modifier across modifiersByEffect. Equipment is not the only source
+// that feeds this: unlocked passives and active auras contribute here too (§3l), so this walks
+// all three, not just modifiersByEffect. Recomputing from the full list rather than adding/
+// subtracting deltas means nothing can drift, and multiplicative or order-dependent modifiers
+// stay correct regardless of what order items get equipped or removed in.
+void RecalculateAggregate()
 
-// Called by ability at execution time
-AbilityExecutionContext BuildContext(string abilityId, AbilityExecutionContext defaults)
-
-// Called by charge-based abilities when restoring charges (e.g. on landing)
-int GetChargeBonus(string abilityId)              // returns 0 if no contributions registered
+// Called by an effect at execution time — O(1): copies already-computed aggregate values into
+// a fresh context, no iteration happens here
+AbilityExecutionContext BuildContext(AbilityEffectSO effect, AbilityExecutionContext defaults)
 ```
 
-`BuildContext` clones `defaults`, iterates registered modifiers for `abilityId` in order,
-calls `Modify(ctx)` on each, and returns the final context. The ability never sees the
-modifier list — it just receives the finished context.
+`RegisterModifiers`/`UnregisterModifiers` update `modifiersByEffect`, then call
+`RecalculateAggregate()`. `BuildContext` clones `defaults` and layers the aggregate's
+already-computed values for `effect` on top — `ctx.baseMultiplier *= (1 +
+aggregate.abilityDamageBonus.GetValueOrDefault(effect))`, `ctx.onHitAuras =
+aggregate.onHitAurasFor.GetValueOrDefault(effect)`, and so on — a fixed handful of dictionary
+reads, not a loop. The effect never sees the modifier list at all, only the finished context.
 
 #### Execution Flow
 
 ```
-Player activates ability
-  → ability builds default AbilityExecutionContext from its own AbilitySO/HitboxDataSO data
-  → EquipmentManager.BuildContext(abilityId, defaults) called
-      → each registered AbilityModifierSO mutates context in order
-  → ability executes using final context values
+Trigger fires → TriggerEffectSO.effect.Execute() called (see §3l)
+  → effect builds default AbilityExecutionContext from its own AbilityEffectSO/HitboxDataSO data
+  → EquipmentManager.BuildContext(this, defaults) called
+      → aggregate values already computed for this effect are layered onto the context — no
+        modifier iteration happens here, that already happened at RecalculateAggregate() time
+  → effect executes using final context values
   → DamageCalculator.Resolve(ctx, attackerStats, attackerAuras, targetStats, targetAuras, targetCombatState) called per hit
       → full resolution order: parry check → block check → armor → damage + stagger → hurt state → on-hit auras → EventBus.Publish
       // (see 3b for complete resolution pseudocode)
 ```
+
+Not every `AbilityEffectSO` necessarily runs through `DamageCalculator` — a self-buff effect
+might just call `AuraManager.ApplyAura()` directly, with no need for `AbilityExecutionContext`
+at all. The context/modifier pipeline exists specifically for effects whose numbers equipment
+should be able to influence; an effect that doesn't deal damage or apply a hit-scaling value
+is free to skip it entirely.
 
 ---
 
@@ -1222,7 +1316,8 @@ float jumpImpulseForce
   so a charge jump thrown out while already falling would launch weaker than one thrown at
   the apex
 - Decrements `remainingJumps`; on `OnPlayerLanded`:
-  `remainingJumps = maxExtraJumps + EquipmentManager.GetChargeBonus("DOUBLE_JUMP")`
+  `remainingJumps = maxExtraJumps + statSheet.chargeBonuses.GetValueOrDefault(ChargeType.AerialJump)`
+  (§3i — the same aggregate `TryWallJump` reads from, not a separate charge-bonus system)
 
 #### Air Dash (`AirDashAbility`)
 
@@ -1237,7 +1332,8 @@ DodgeSO airDashData         // reuses existing DodgeSO — same i-frames, speed 
 - Delegates entirely to `DodgeSystem` using `airDashData`
 - Same i-frame and perfect dodge logic applies unchanged
 - On `OnPlayerLanded`:
-  `remainingAirDashes = maxAirDashes + EquipmentManager.GetChargeBonus("AIR_DASH")`
+  `remainingAirDashes = maxAirDashes + statSheet.chargeBonuses.GetValueOrDefault(ChargeType.Dash)`
+  (§3i)
 
 #### Grapple / Hookshot (`GrappleAbility` — `WIRE_FU`)
 
@@ -1284,14 +1380,16 @@ existing hitbox/damage pipeline — `GrapplePoint` layer never participates in c
 
 ### 3l. Motion Input System
 
-Fighting game-style directional sequences (quarter circles, half circles, etc.) as learnable
-abilities. Detection is entirely separate from the combo system — different buffer, different
-SO type, different detector. Once a motion is matched it fires through the existing
-`AbilityExecutionContext` pipeline identically to any other ability.
+Fighting game-style directional sequences (quarter circles, half circles, etc.) are one kind
+of `TriggerSO` — see below. Detection is entirely separate from the combo system — different
+resolution path, different SO types, different detector. Once a trigger fires, its paired
+effect runs through the same `AbilityExecutionContext` pipeline as any other ability, where
+relevant (see §3j — not every effect needs it).
 
-A traveling special (e.g. a fireball) additionally needs a projectile carrier — see Build
-Order §12 row 6. Every existing attack's hitbox is a child transform of its attacker, keyframed
-on that attacker's own clip; nothing here models a detached, independently-moving collider.
+A traveling special (e.g. a fireball) additionally needs a projectile carrier — see
+"Projectile System" below. Every existing melee attack's hitbox is a child transform of its
+attacker, keyframed on that attacker's own clip; nothing about that model covers a detached,
+independently-moving collider.
 
 #### Advanced Combat Mode
 
@@ -1304,7 +1402,7 @@ bool advancedCombatActive
 
 While active:
 - Facing direction is locked — the character won't turn around during stick rotations
-- `MotionInputDetector` processes action button presses against motion patterns
+- `MotionInputDetector` walks its trie against action button presses (see below)
 - Movement speed is unchanged
 
 The `ADVANCED_COMBAT` ability must be unlocked before the button does anything.
@@ -1313,7 +1411,7 @@ Pressing it before unlock has no effect — the flag simply never sets.
 #### Analog Stick → Zone Mapping
 
 The raw stick `Vector2` is converted to a single integer zone every frame before reaching
-the buffer. Two steps:
+the trie walker (see `MotionInputDetector` below). Three steps:
 
 **1. Dead zone check**
 If `stick.magnitude < zoneDeadzone` → zone 5 (neutral). Prevents drift registering as input.
@@ -1333,43 +1431,67 @@ Each sector is centered on its angle. Default sector width is **45°** per zone.
 Setting cardinal zones to **50°** (diagonals shrink to 40°) makes quarter circles more
 forgiving — a tuning value on `StickInputConfigSO`, not a code change.
 
-The decimal stick position is consumed here and never reaches the buffer. All downstream
-motion detection reasons purely in integers.
+**3. Facing-relative normalization.** Zones with a horizontal component (1, 3, 4, 6, 7, 9)
+are mirrored by `FacingRight` before the zone goes anywhere else — 2/8/5 are untouched,
+carrying no horizontal component to flip. Every `MotionInputTriggerSO` is authored once, in
+"toward/away" terms, rather than absolute screen-space left/right — `QCF` is simply "the
+motion toward wherever the player is facing," with no separate mirrored variant needed.
+Consistent with how facing is already handled elsewhere in this codebase (the hitbox
+pipeline mirrors via `transform.localScale.x` rather than re-deriving signs downstream, see
+§3n) — mirror once at the source, not in every consumer.
 
-#### MotionInputBuffer
+The decimal stick position is consumed here and never reaches anything downstream. All
+motion detection reasons purely in integers, already facing-normalized.
 
-A separate circular buffer from `InputBuffer` (which handles combo chaining). Runs
-continuously, recording one entry per zone change:
+#### Trigger, Effect, and TriggerEffectSO
+
+Generalizes past just combat. Anything in the game that fires an effect off some triggering
+condition — a motion input, interacting with a prop, killing a specific enemy — is the same
+shape: a trigger, an effect, and a small asset binding one to the other. Only the combat case
+(motion inputs) is actually being built right now; the split costs nothing to keep general.
 
 ```csharp
-struct MotionZoneEntry {
-    int   zone
-    float enteredAt    // Time.time when this zone was entered
-    float exitedAt     // Time.time when zone was exited (0 if still active)
+public abstract class TriggerSO : ScriptableObject { }
+
+public abstract class EffectSO : ScriptableObject {
+    public abstract void Execute(GameObject caster);
 }
 
-int   bufferSize     // entries to retain (e.g. 32)
-float zoneDeadzone   // magnitude threshold for neutral (zone 5)
+public class TriggerEffectSO : ScriptableObject {
+    public TriggerSO trigger;
+    public EffectSO  effect;
+
+    // Always present, even where unused — an environment-prop buff might only ever show a
+    // generic "Interact" prompt on screen with no name or icon, but the fields cost nothing
+    // to carry, and something will eventually want them (a spellbook UI, at minimum).
+    public string displayName;
+    public string description;
+    public Sprite icon;
+}
 ```
 
-An entry is only written when the zone changes — prevents flickering between adjacent
-zones from polluting the buffer.
+Whether a *different* domain (prop interactions, kill triggers) ends up subclassing these
+same `TriggerSO`/`EffectSO` bases, or reimplements the identical shape under its own names,
+is a call worth making when one of those actually gets designed — not before. The only
+concrete classes that exist today are the combat ones below.
 
-#### MotionPatternSO
+#### MotionInputTriggerSO
 
-Each step carries a zone group rather than a single zone, and an optional minimum hold
-duration for charge inputs. Defines one learnable ability as a data asset — no code per ability:
+`TriggerSO` subclass for fighting-game-style directional sequences. Each step carries a zone
+group rather than a single zone, and an optional minimum hold duration for charge inputs:
 
 ```csharp
-struct MotionStep {
-    int[]  zones             // any zone in this array satisfies the step
-    float  minHoldDuration   // 0 = transition (pass-through); > 0 = charge (must hold)
-}
+public class MotionInputTriggerSO : TriggerSO {
+    struct MotionStep {
+        int[]  zones             // any zone in this array satisfies the step
+        float  minHoldDuration   // 0 = transition (pass-through); > 0 = charge (must hold)
+    }
 
-MotionStep[] sequence        // ordered steps
-InputAction  confirmButton   // OnAttackLight, OnAttackHeavy, OnAbility1, etc.
-float        maxStepInterval // max seconds allowed between each step
-string       abilityId       // passed into AbilityExecutionContext pipeline on match
+    MotionStep[] sequence        // ordered steps
+    InputAction  confirmButton   // OnAttackLight, OnAttackHeavy, OnAbility1, etc.
+    float        sequenceWindow  // max seconds for the WHOLE sequence, from first step to last —
+                                  // not per-step; see MotionInputDetector. Kept brief by design.
+}
 ```
 
 **Zone groups decouple intent from exact position.** `zones=[1,4,7]` means "any back
@@ -1377,7 +1499,8 @@ direction" — the player can hold straight back, down-back, or up-back intercha
 Diagonal zones naturally carry both their axis components, matching Guile-style flexibility
 at no extra cost.
 
-**Common patterns:**
+**Common patterns** (authored facing-relative — "forward"/6 always means toward the
+opponent):
 
 | Name | Steps | Shorthand |
 |---|---|---|
@@ -1389,36 +1512,224 @@ at no extra cost.
 | Flash Kick (charge) | [1,2,3] hold 1.2s → [7,8,9] | CD→U |
 | Back Back Forward | [4,1,7]→[4,1,7]→[6,3,9] | BBF |
 
-#### MotionInputDetector
+#### AbilityEffectSO
 
-Component on the player. Only evaluates when `advancedCombatActive = true`.
+`EffectSO` subclass for combat abilities specifically — a domain-specific concrete base, not
+a reuse of `EffectSO` directly, so combat effects can share combat-specific plumbing
+(`AbilityExecutionContext`, see §3j) without that leaking into unrelated domains.
+`SpawnProjectileEffectSO` (see "Projectile System" below), a command-throw effect, a
+self-buff effect, and an enemy-debuff effect are all `AbilityEffectSO` subclasses — one
+class per distinct kind of thing an ability can actually do, same "new subclass, zero
+changes elsewhere" property as every other composed behavior in this design.
 
-**Pattern matching uses skip mode** — when scanning the buffer backwards for a step, any
-entry whose zone is not in `step.zones` is skipped transparently. Only entries that satisfy
-the current step advance the match. This means intermediate directions between repeated
-steps (e.g. `4→2→4→6` satisfying `BBF`) are ignored naturally — the only requirement is
-that matching zones appear in order within `maxStepInterval`.
+#### Skill Loadout
 
-**Charge detection** sums the `exitedAt - enteredAt` durations of all contiguous buffer
-entries where `zone ∈ step.zones`. This handles stick drift between valid charge zones
-(e.g. wandering between zone 4 and zone 1 while holding back) without breaking the charge.
+Two tiers, not one flat unlock set:
 
-On any action button press:
+- **Owned pool** — every `TriggerEffectSO` the player has ever unlocked, unbounded,
+  persisted (exploration/story-gated, same as any other ability unlock). Free to grow to
+  cover the whole game's roster of specials, since nothing iterates it directly at runtime.
+- **Active loadout** — a small, player-curated subset of the owned pool, changeable
+  outside combat (a menu, a rest point — never mid-fight), capped at a fixed count. This is
+  the *only* thing `MotionInputDetector` ever looks at, filtered to entries whose `trigger`
+  is a `MotionInputTriggerSO` — other trigger types, if any exist, are irrelevant to it.
+
+This is a deliberate "spellbook" constraint, not an incidental limitation: it keeps the set
+`MotionInputDetector` has to track small and cheap regardless of how much content the game
+eventually ships, and it turns "two abilities share an input" from a bug into a content
+lever — the only real requirement is no collision *within one loadout*, so different
+unlockable specials are free to reuse a satisfying motion across the game's whole roster as
+long as the player can never have two of them active at once.
+
+#### MotionInputDetector — Real-Time Trie Resolution
+
+Component on the player. Only evaluates when `advancedCombatActive = true`. A trie is built
+from the active loadout's `MotionInputTriggerSO`s and walked forward, incrementally, as zone
+changes arrive — there is nothing to scan at button-press time, only a current position to
+read.
+
+**Every runtime-needed value is baked into the node at build time — the walk never computes
+or looks anything up, only reads:**
+
+```csharp
+class TrieNode {
+    Dictionary<int, TrieNode> children;   // keyed by zone
+    EffectSO effectOnComplete;            // null unless this node terminates some ability's sequence
+    float    effectiveWindow;             // precomputed, not derived while walking — see below
+}
 ```
-1. Check advancedCombatActive — if false, skip entirely
-2. Filter registered MotionPatternSOs by confirmButton
-3. For each candidate, walk buffer backwards in skip mode:
-   a. For each step, scan backwards skipping non-matching entries
-   b. For charge steps: sum durations of contiguous same-group entries,
-      verify total >= minHoldDuration
-   c. Verify time between matched entries <= maxStepInterval
-4. Match found → fire ability through AbilityExecutionContext pipeline, consume input
-5. No match → input falls through to ComboSystem as a normal attack
+
+**Build.** Rebuilt whenever the active loadout changes, or on load — cheap, since the
+loadout is small and changes rarely, never per-frame. Patterns sharing a prefix (the same
+first N steps) share the same trie nodes. Walking/creating a path per `MotionInputTriggerSO`'s
+sequence, the final node of that path gets `effectOnComplete` set directly to the paired
+`TriggerEffectSO.effect` — no side list, no lookup table, the association lives on the node
+itself. `effectiveWindow` on every node along the way is set to the *longest* `sequenceWindow`
+among every ability whose sequence passes through that node, so a shared prefix never
+short-changes a pattern with a longer configured window than a sibling sharing that prefix.
+
+**Walk.** State is just a current node pointer plus one timestamp (`attemptStartTime`) — no
+history buffer, no per-pattern bookkeeping. On each zone change:
+
+```
+1. If an attempt is in progress and Time.time - attemptStartTime > currentNode.effectiveWindow:
+     reset to root (attempt abandoned — too slow, start over)
+2. If the new zone matches one of the current node's children:
+     advance to that child
+     if this was the first step away from root, set attemptStartTime = Time.time
+     if the new node's effectOnComplete is non-null:
+       effectOnComplete.Execute(caster)
+       reset to root
+3. Else (zone doesn't match any child from here):
+     stay at the current node — not a reset
 ```
 
-Fall-through is important — pressing punch without a valid motion still performs a normal
-attack. Players who haven't unlocked `ADVANCED_COMBAT`, or who aren't holding the button,
-experience zero difference from the base combat system.
+**On button press:** check whether `effectOnComplete` at the current node is non-null and
+its `TriggerEffectSO`'s `confirmButton` matches this press. No match → the press falls
+through to `ComboSystem` as a normal attack. Players who haven't unlocked `ADVANCED_COMBAT`,
+aren't holding the button, or have nothing in their loadout that matches, experience zero
+difference from the base combat system.
+
+**"Stay put, don't reset" on a mismatch reproduces the originally-intended skip-mode
+tolerance.** Walking `4→2→4→6` against `BBF` (`[4,1,7]→[4,1,7]→[6,3,9]`): zone 4 advances to
+step 1; zone 2 matches nothing at step 2, so the walker just stays there; zone 4 advances to
+step 2; zone 6 completes step 3. Same result as scanning with skip-mode tolerance, with
+nothing actually scanned — only the timeout can cancel an attempt.
+
+**A shared prefix needs no tie-breaking.** Nothing waits to see whether a deeper node is
+coming, so a shared node either fires (it's a completion node) or it doesn't (the walk
+continues) — there is never more than one live candidate to track. If two patterns in the
+same loadout share a prefix and one completes before the other, the shorter one just fires —
+matching how real fighting-game input parsers behave (a Dragon Punch motion can "steal" a
+longer special sharing its opening frames), not something requiring disambiguation. Where a
+shared node has multiple still-reachable patterns with different `sequenceWindow` values,
+the longest of those windows governs at that node — no pattern is short-changed by a
+stricter sibling sharing its prefix.
+
+**Timeout is for the whole attempt, not per step, and stays brief.** `attemptStartTime` is
+set once, on the first successful step away from root, and never refreshed by later
+successful steps — the entire sequence must land inside one short window regardless of step
+count. A per-step reset would only bound individual gaps, letting a slow, deliberate player
+stretch a long sequence (`HCB`'s 5 steps, say) out arbitrarily; one brief whole-attempt
+window is what actually makes idly wandering the stick infeasible, not just discouraged.
+
+**Charge steps are exempt from the brief-window clock during the hold itself.** A charge
+requirement (`minHoldDuration`) can be held as long as the player likes — the clock for the
+*following* transition steps (the release/flick portion) only starts once the hold
+requirement is first satisfied, matching how charge motions actually feel in the genre: hold
+as long as you want, but the release has to be brisk. Charge accumulation needs no history
+either — an accumulated-hold-time counter plus a last-zone-entry timestamp, updated
+incrementally as zone changes arrive, tolerates brief drift between the charge group's zones
+the same way the originally-drafted buffer-summing approach did.
+
+#### Projectile System
+
+Carrier for any traveling special (a fireball fired via `SpawnProjectileEffectSO`, most
+immediately). Every existing melee attack's hitbox is a permanent child of its attacker,
+keyframed on that attacker's own clip — a projectile is a detached, independently-moving
+GameObject instead, so it needs its own small set of pieces rather than reusing that model.
+
+**`ProjectileController`** — lives on a per-type prefab (`Fireball.prefab`, etc.), not a
+shared prefab with swapped data, since the visual/animation genuinely differs per projectile
+type the way it doesn't for a swappable `HitboxDataSO`. Carries its own `HitboxController` —
+fully self-contained, so the existing attacker-driven `OnZoneHit`/`LateFixedUpdate`/
+`DamageCalculator.Resolve` chain (§3n) works completely unchanged; a projectile is just an
+"attacker" that also moves and dies on its own. Damage stays on the same trimmed
+`HitboxDataSO` pipeline every melee attack already uses (revisit once `AbilityExecutionContext`
+actually flows through projectiles too), assigned to the instance's `HitboxController` at
+spawn time exactly like `AttackState.Enter()` already does for melee — not baked into the
+prefab, since the same visual/prefab could plausibly back more than one tuning of the same
+special later.
+
+```csharp
+float                    speed;
+float                    maxRange;             // 0 = unbounded; see room-exit note below
+bool                     despawnOnTerrainHit;  // default false — passes through terrain
+ProjectileHitBehaviorSO  onHitBehavior;        // null = default to despawn on first contact
+```
+
+**On-hit behavior is pluggable, same shape as everything else composed in this design:**
+
+```csharp
+public abstract class ProjectileHitBehaviorSO : ScriptableObject {
+    public abstract void OnHit(ProjectileController projectile, HurtboxController target);
+}
+```
+
+- `null` on `onHitBehavior` *is* the default — despawn after the first contact. No explicit
+  "despawn" subclass is needed for the common case.
+- `PierceHitBehaviorSO` — doesn't despawn on hit. Needs no extra "already hit" tracking:
+  `HitboxController`'s existing dedup already relies on Unity firing `OnTriggerEnter2D` only
+  once per continuous overlap, so a target already hit can't re-fire while still touching it,
+  and a still-moving, non-despawned projectile is naturally free to hit new targets as it
+  continues.
+- `SpawnOnHitBehaviorSO` — spawns one or more other prefabs at the impact point (an
+  explosion, a 3-way split into smaller projectiles) instead of despawning cleanly.
+  References a `ProjectileMultiSpawnSO` to describe *what* and at *what angles*, kept
+  separate so the same spread shape (e.g. an even 3-way fan) is one reusable asset instead
+  of duplicated fields on every behavior that wants that same fan. An "explosion" is just a
+  projectile with `speed = 0` and a one-shot hitbox — no separate class needed for that case.
+
+**Terrain is a flag, not a pluggable behavior** — unlike on-hit, there's no real variety to
+compose over (despawn or don't), so `despawnOnTerrainHit` is a plain bool. The collider stays
+on one physics layer that always overlaps terrain regardless of the flag's value; the flag
+just gates what the callback does with that contact, so every projectile shares one physics
+setup and an ignored contact costs nothing.
+
+**Lifetime, in priority order:** hits something (governed by `onHitBehavior`) → travels
+`maxRange` (a short-range special like a point-blank fireball that fizzles a few feet out;
+distance-based and speed-independent, unlike a timer) → **TEMPORARY: exceeds a flat
+distance/lifetime safety net if `maxRange == 0` (unbounded).** The real intent for the
+unbounded case is "despawn on leaving the room," not "despawn near the screen edge" —
+camera-relative culling visibly kills projectiles right in front of off-screen enemies, which
+reads as a bug to a player, not a design choice. There is no room-bounds concept in the
+codebase yet (`CameraManager`/Camera System, §3t, isn't built — see the TODO section);
+**replace this temporary safety net with a real room-bounds check once that exists.**
+Unbounded-range projectiles are expected to be the exception, not the default, so this gap
+is low-stakes in practice.
+
+**Spawning.** `MotionInputDetector` never calls `Instantiate` itself — a matched
+`MotionInputTriggerSO` fires `TriggerEffectSO.effect.Execute(caster)`, and a
+`SpawnProjectileEffectSO`'s `Execute` is what actually requests a projectile. All spawning
+and despawning funnels through one entry point, `ProjectileManager` (a scene-owned component,
+not a static utility — the moment pooling is added it needs real state, a pool per prefab,
+the same reason `EquipmentManager`/`AuraManager`/`WorldStateManager` are components rather
+than static classes):
+
+```csharp
+GameObject Spawn(GameObject prefab, Vector2 position, Vector2 direction, HitboxDataSO hitboxData);
+void       Despawn(ProjectileController instance);
+```
+
+**Plain `Instantiate`/`Destroy` for now, not pooling — a deliberate choice, not an
+oversight.** Pooling earns its complexity (careful reset-on-reuse for every field that could
+carry state between "lives" — position, velocity, which targets a piercing projectile has
+already hit) once spawn volume is high enough for GC pressure to actually matter, which is
+bullet-hell territory. A player manually inputting a motion-plus-button combo per special is
+nowhere near that throughput. Funneling every spawn/despawn through `ProjectileManager` means
+swapping in `UnityEngine.Pool.ObjectPool<T>` later, if profiling ever actually asks for it,
+is a contained change inside that one component rather than a rewrite.
+
+#### Passive Unlocks
+
+Deliberately separate from the active skill loadout above — there is no input-collision
+concern for a passive, so there's no reason to bound how many a player can have active at once.
+
+No dedicated `PassiveUnlockSO` class — turned out to be redundant the same way `AbilitySO`
+was (§3l, earlier). A world-unlocked passive ("+1 wall jump charge" from learning a technique,
+as opposed to from a ring) is just a `NumericModifierSO` or `AbilityModifierSO` instance (§3j),
+identical in every way to an equipment-granted one — the only difference is which event feeds
+it into `StatSheet`'s `ModifierAggregate`: an unlock event instead of an equip event. Reusing
+the exact same `ContributeTo`/`ModifierAggregate` machinery means a passive-granting unlock and
+an equipment-granting item are authored identically, and both recompute on their respective
+change event, never per-frame — same discipline, same types, one fewer parallel system to keep
+in sync.
+
+Deliberately **not** unifying *this* with `WorldStateManager.unlockedAbilities` (the
+`HashSet<string>` backing world-traversal ability gates like `WALL_JUMP`/`DOUBLE_JUMP`, see
+§4 Ability Gates) — that stays a fundamentally different shape of problem, an occasional
+boolean query rather than an aggregate recomputed from a list, and forcing both into one
+mechanism isn't worth the coupling.
 
 ---
 
@@ -1950,7 +2261,7 @@ StatBonus    baseStats
 
 // Base ability modifiers (always granted — authored, not rolled)
 // Stored as pairs so one template can modify multiple abilities
-List<(string abilityId, AbilityModifierSO modifier)> baseAbilityModifiers
+List<(AbilityEffectSO effect, AbilityModifierSO modifier)> baseAbilityModifiers
 
 // Proc-gen affix pool (used for Magic and Rare drops from this template)
 // Common drops draw 0 affixes; Legendary items ignore this list entirely
@@ -1974,7 +2285,7 @@ int          minLevel
 
 // Fully authored — no affix rolling
 StatBonus    stats
-List<(string abilityId, AbilityModifierSO modifier)> abilityModifiers
+List<(AbilityEffectSO effect, AbilityModifierSO modifier)> abilityModifiers
 ```
 
 ---
@@ -1988,7 +2299,7 @@ ScriptableObject. One asset per affix type (e.g. "Weapon Damage", "Max Health",
 string   affixId
 string   displayTemplate     // e.g. "+{value} Weapon Damage" — {value} replaced in UI tooltip
 
-// Stat affix (set statType; leave abilityId + modifier null)
+// Stat affix (set statType; leave effect + modifier null)
 AffixStatType statType       // enum: WeaponDamage, Armor, MaxHealth, MaxChiPool,
                              //       Strength, Chi, Dexterity, Constitution,
                              //       MovementSpeed, AttackSpeed, DetectionRange
@@ -1996,8 +2307,8 @@ float    minValue
 float    maxValue
 float    levelScaleFactor    // final = lerp(min, max, t) + (itemLevel * levelScaleFactor)
 
-// Ability modifier affix (set abilityId + modifier; leave statType = None)
-string            abilityId  // which ability this affix modifies (null = stat affix)
+// Ability modifier affix (set effect + modifier; leave statType = None)
+AbilityEffectSO   effect     // which ability this affix modifies (null = stat affix)
 AbilityModifierSO modifier   // the modifier instance to contribute (null = stat affix)
 
 // Affix availability and weighting
@@ -2044,7 +2355,7 @@ int          minLevel           // copied from template; checked on equip attemp
 StatBonus    stats
 
 // Resolved ability modifiers (base + affix-contributed, collected at generation time)
-List<(string abilityId, AbilityModifierSO modifier)> abilityModifiers
+List<(AbilityEffectSO effect, AbilityModifierSO modifier)> abilityModifiers
 
 // Affix display (for tooltip UI)
 List<AffixInstance> rolledAffixes     // empty for Common and Legendary items
@@ -2082,7 +2393,7 @@ ItemGenerator.Generate(template, rarity, playerLevel):
            → add rolledValue to the matching field in ItemData.stats
            → record AffixInstance(affixId, rolledValue) in rolledAffixes
          IF ability modifier affix:
-           → add (abilityId, modifier) to ItemData.abilityModifiers
+           → add (effect, modifier) to ItemData.abilityModifiers
            → record AffixInstance(affixId, 0) in rolledAffixes
     6. Return ItemData
 ```
@@ -2111,19 +2422,24 @@ void Unequip(SlotType slot)
     // 3. StatSheet.RefreshEquipmentBonuses()
 
 void RegisterModifiers(ItemData item)
-    // iterates item.abilityModifiers; adds each to modifiersByAbilityId[abilityId]
-    // ChargeCountModifierSO contributions also added to chargeBonuses
+    // iterates item.abilityModifiers; adds each to modifiersByEffect[effect]
+    // then calls RecalculateAggregate() to rebuild StatSheet's ModifierAggregate (§3i/§3j) —
+    // NumericModifierSO contributions (charges, elemental, ability-damage) included, not just
+    // the qualitative AbilityModifierSO subclasses
 
 void UnregisterModifiers(ItemData item)
-    // removes item's contributions from modifiersByAbilityId and chargeBonuses
+    // removes item's contributions from modifiersByEffect, then RecalculateAggregate()
 ```
 
 `StatSheet.RefreshEquipmentBonuses()` clears `equipmentBonuses`, iterates all `equippedItems`
 values, and accumulates each `item.stats` field-by-field. `detectionRangeMultiplier` multiplies
 rather than adds (start at 1.0, multiply each item's value in). All other fields are additive.
+This is separate from `RecalculateAggregate()` above — `StatBonus` (primary/derived stats) and
+`ModifierAggregate` (charges/elemental/ability-damage) are two distinct aggregates on the same
+`StatSheet`, recomputed by two distinct passes, per §3i.
 
-`BuildContext`, `GetChargeBonus`, and the `modifiersByAbilityId` registry are unchanged from
-the existing design in Section 3j.
+`BuildContext` and the `modifiersByEffect` registry are unchanged from the existing design in
+Section 3j.
 
 ---
 
@@ -3528,7 +3844,7 @@ room load and on `OnAbilityUnlocked` events. Opens with an animation and disable
 - `IRON_BODY` (withstands environmental hazards)
 - `WIRE_FU` (grapple to ceiling anchor rings)
 - `ADVANCED_COMBAT` (unlocks advanced combat mode + motion input detection)
-- Additional motion input abilities defined via `MotionPatternSO` — no code required per ability
+- Additional motion input abilities defined via `TriggerEffectSO` — no code required per ability
 
 ---
 
@@ -3747,11 +4063,12 @@ self-contained `MonoBehaviour` components that call hooks on `PlayerController`.
 player systems have no knowledge of installed abilities. Adding a new movement ability is
 adding a component — no changes to `PlayerStateMachine` or `PlayerController`.
 
-**Motion inputs are detection-layer only.** `MotionInputBuffer` and `MotionInputDetector`
-are entirely separate from `InputBuffer` and `ComboSystem`. A matched motion fires through
-the same `AbilityExecutionContext` pipeline as every other ability. New motion abilities are
-`MotionPatternSO` assets — no code required. Unmatched inputs fall through to the combo
-system transparently.
+**Motion inputs are detection-layer only.** `MotionInputDetector` is entirely separate from
+`InputBuffer` and `ComboSystem`. A matched trigger fires its paired `EffectSO` directly —
+some effects then use the `AbilityExecutionContext` pipeline (§3j), some don't need to. New
+motion-triggered abilities are `TriggerEffectSO` assets pairing a `MotionInputTriggerSO` with
+whatever effect fits — no code required. Unmatched inputs fall through to the combo system
+transparently.
 
 ---
 
@@ -3908,8 +4225,8 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 | 2 | `PlayerStateMachine.cs` | Gates all combat work | ✅ Done |
 | 3 | `HitboxController.cs` / `HurtboxController.cs` (+ `HurtboxZoneForwarder.cs`, `DamageCalculator.cs`) | Damage pipeline | ✅ Done — attacker-driven resolution, `Health.TakeDamage`/`OnEntityDamaged`, and hitbox reach authored via keyframed AnimationClip curves rather than a code reach-index; Head/Block/stagger/StatSheet still stubbed, see §3n |
 | 4 | `InputBuffer.cs` | Required before combo system | ✅ Done — `InputBuffer.cs` (`KungFuVania.Combat`), a capacity-16 timestamped ring buffer on the Player. `PlayerController` buffers a light/heavy attack press only when `TryEnterState` fails because the combat state machine is busy (not for any other rejection reason), then on return to `NONE` re-resolves the crouch/air/ground target state fresh against current locomotion — never a press-time snapshot — before retrying through `TryEnterState`, so a stale buffered attack fails closed instead of firing in a context it's no longer valid for. One flat `[SerializeField]` expiry window (0.4s, tuned to safely outlast the busiest current attack clip), measured from the press itself; no per-step `inputBufferWindow`/`inputExpireWindow` or cancellable-frame gating yet — that's `ComboSystem`/`ComboStep`'s job once combos exist |
-| 5 | `MotionInputBuffer.cs` + `MotionInputDetector.cs` | Moved up ahead of Stagger/Stat/Aura/Equipment — a matched pattern only needs to fire *something*, and can do that as a trimmed flat-damage attack today (same trim `DamageCalculator` already uses, see row 3) rather than waiting on the full `AbilityExecutionContext` chain. Facing-relative zone mirroring (which way "forward" snaps to when facing left) isn't designed yet — flagged, not solved, see §3l. | Not started |
-| 6 | `ProjectileController.cs` (name provisional — no design section written yet) | Carrier for any traveling special fired by Motion Input System (e.g. a fireball); see the note at the end of §3l. Listed after Motion Input System here for build-order bookkeeping only — functionally it needs to land alongside or before it, since a matched motion has nothing to fire without it. | Not started — no design section yet |
+| 5 | `MotionInputDetector.cs` (+ skill loadout) | Moved up ahead of Stagger/Stat/Aura/Equipment — a matched pattern only needs to fire *something*, and can do that as a trimmed flat-damage attack today (same trim `DamageCalculator` already uses, see row 3) rather than waiting on the full `AbilityExecutionContext` chain. Facing-relative zone mirroring and the runtime resolution model are now fully designed — see §3l: a real-time trie walk over the player's active skill loadout, replacing the originally-drafted `MotionInputBuffer` ring buffer entirely (it's gone from the design, not just unbuilt). | Not started |
+| 6 | `ProjectileController.cs` + `ProjectileManager.cs` | Carrier for any traveling special fired by Motion Input System (e.g. a fireball) — fully designed now, see §3l "Projectile System". Listed after Motion Input System here for build-order bookkeeping only — functionally it needs to land alongside or before it, since a matched motion has nothing to fire without it. | Not started |
 | 7 | `StaggerMeter.cs` | Required before combat tuning | Not started |
 | 8 | `StatSheet.cs` | Required before damage formula, health system, or chi pool | Not started |
 | 9 | `GameTickManager.cs` | Required before any tick-based aura | Not started |
@@ -3926,6 +4243,3 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 
 - **Parallax background layers** (§3t) — blocked on `CameraManager`/`CameraTarget` actually
   moving; see the note in Camera System above.
-- **Projectile system** (Build Order §12 row 6) — no dedicated design section yet (spawn,
-  travel, collision-once, cleanup for a detached, independently-moving hitbox). Needed before
-  any projectile-based special, motion-input-triggered or otherwise, can do anything on hit.

@@ -13,7 +13,7 @@ namespace KungFuVania.Combat
         // How long a buffered press stays worth firing before it's dropped instead. Measured from
         // the press itself rather than from a cancellable frame (no such concept exists yet — see
         // GAME_PLAN.md 3e ComboStep), so a press at the very start of the busiest current attack
-        // (JUMP_KICK, ~0.3s) still needs to outlive it; kept generous on top of that since a
+        // (JUMP_ATTACK_2, ~0.3s) still needs to outlive it; kept generous on top of that since a
         // forgiving buffer is the whole point (spec calls out "slightly sloppy but still rewarded").
         [SerializeField] private float expireWindow = 0.4f;
 

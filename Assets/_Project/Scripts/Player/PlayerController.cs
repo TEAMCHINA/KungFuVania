@@ -250,12 +250,12 @@ namespace KungFuVania.Player
             if (attackAction == "LIGHT")
             {
                 if (isCrouching) return "CROUCH_ATTACK_1";
-                if (isAirborne) return "JUMP_PUNCH";
+                if (isAirborne) return "JUMP_ATTACK_1";
                 return "ATTACK_1";
             }
 
             if (isCrouching) return "CROUCH_ATTACK_2";
-            if (isAirborne) return "JUMP_KICK";
+            if (isAirborne) return "JUMP_ATTACK_2";
             return "ATTACK_2";
         }
 
