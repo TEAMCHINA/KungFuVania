@@ -2,11 +2,16 @@ using UnityEngine;
 
 namespace KungFuVania.Player.Combat
 {
+    // Shared by the dash-forward/dash-back/dodge-roll trio — same mechanic throughout (constant
+    // speed for totalDuration, i-frame window, wall-aware movement), only distance and direction
+    // differ per instance. See PlayerController's forwardDashDistance/backDashDistance/
+    // dodgeDistance for the tunable distances.
     public class DodgeState : ICombatState
     {
         private readonly PlayerCombatStateMachine machine;
         private readonly float totalDuration;
-        private readonly AnimationCurve speedCurve;
+        private readonly System.Func<float> getDistance;
+        private readonly bool reverseDirection;
         private readonly float iFrameStart;
         private readonly float iFrameEnd;
         private readonly LayerMask obstructionMask;
@@ -15,28 +20,43 @@ namespace KungFuVania.Player.Combat
         private float direction;
         private bool iFramesActive;
 
-        public DodgeState(PlayerCombatStateMachine machine, float totalDuration, AnimationCurve speedCurve,
-            float iFrameStart, float iFrameEnd, LayerMask obstructionMask)
+        // getDistance is read fresh every FixedTick rather than captured once, so tweaking
+        // PlayerController's dash/dodge distance fields in the Inspector takes effect on the next
+        // dodge immediately — no need to stop and restart Play Mode to test a tuning change.
+        public DodgeState(PlayerCombatStateMachine machine, float totalDuration, System.Func<float> getDistance,
+            float iFrameStart, float iFrameEnd, LayerMask obstructionMask, bool reverseDirection = false)
         {
             this.machine = machine;
             this.totalDuration = totalDuration;
-            this.speedCurve = speedCurve;
+            this.getDistance = getDistance;
             this.iFrameStart = iFrameStart;
             this.iFrameEnd = iFrameEnd;
             this.obstructionMask = obstructionMask;
+            this.reverseDirection = reverseDirection;
         }
 
         public void Enter()
         {
             elapsed = 0f;
             iFramesActive = false;
-            direction = machine.Controller.FacingRight ? 1f : -1f;
+            var facing = machine.Controller.FacingRight ? 1f : -1f;
+            direction = reverseDirection ? -facing : facing;
             machine.Controller.SetKinematic(true);
         }
 
-        public void Tick(float deltaTime)
+        public void Tick(float deltaTime) { }
+
+        // All movement lives here rather than in Tick: this calls Rigidbody2D.MovePosition
+        // (via MoveWithoutTunneling) on a Kinematic body, which only takes effect on the next
+        // physics step. Update can fire more than once per physics step at high framerates, and
+        // each call computes its target from the not-yet-moved current position — so calling this
+        // from Update would let later calls overwrite earlier ones instead of accumulating,
+        // silently dropping most of the intended distance (confirmed live: a configured 4-unit
+        // roll travelling as little as 0.5 units at high framerate). FixedUpdate guarantees exactly
+        // one call per physics step.
+        public void FixedTick(float fixedDeltaTime)
         {
-            elapsed += deltaTime;
+            elapsed += fixedDeltaTime;
 
             if (!iFramesActive && elapsed >= iFrameStart)
             {
@@ -49,8 +69,8 @@ namespace KungFuVania.Player.Combat
                 machine.HurtboxController.SetInvulnerable(false);
             }
 
-            var speed = speedCurve.Evaluate(Mathf.Clamp01(elapsed / totalDuration));
-            MoveWithoutTunneling(speed * deltaTime * direction);
+            var speed = getDistance() / totalDuration;
+            MoveWithoutTunneling(speed * fixedDeltaTime * direction);
 
             if (elapsed >= totalDuration)
             {

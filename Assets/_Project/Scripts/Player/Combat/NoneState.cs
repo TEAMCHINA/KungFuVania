@@ -4,6 +4,7 @@ namespace KungFuVania.Player.Combat
     {
         public void Enter() { }
         public void Tick(float deltaTime) { }
+        public void FixedTick(float fixedDeltaTime) { }
         public void Exit() { }
     }
 }

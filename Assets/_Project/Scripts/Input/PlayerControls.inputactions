@@ -243,7 +243,18 @@
                 {
                     "name": "",
                     "id": "f4274751-1f8d-410d-b6c8-9d85984f4219",
-                    "path": "<Keyboard>/leftShift",
+                    "path": "<Keyboard>/leftAlt",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Dodge",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "fca878eb-28ec-4201-89d0-0aa9817cd64d",
+                    "path": "<Gamepad>/buttonEast",
                     "interactions": "",
                     "processors": "",
                     "groups": "",

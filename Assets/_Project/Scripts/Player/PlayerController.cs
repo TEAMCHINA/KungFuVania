@@ -34,6 +34,14 @@ namespace KungFuVania.Player
         // launch velocity — without it, still holding "into" the wall (as wall-sliding requires)
         // would cancel the horizontal kick on the very next physics step.
         [SerializeField] private float wallStickTime = 0.2f;
+        [SerializeField] private float forwardDashDistance = 1f;
+        [SerializeField] private float backDashDistance = 1f;
+        [SerializeField] private float dodgeDistance = 2f;
+        // How long to wait after a single dodge-button tap to see whether a second tap arrives
+        // (making it a roll) before committing to a dash. This is the standard tap-vs-double-tap
+        // tradeoff — it puts a small, fixed delay on every single-tap dash, since there's no way
+        // to know a tap won't become a double-tap until this window has passed.
+        [SerializeField] private float dodgeDoubleTapWindow = 0.25f;
 
         private Rigidbody2D rb;
         private CapsuleCollider2D capsule;
@@ -53,6 +61,10 @@ namespace KungFuVania.Player
         private int pendingTapDirection;
         private float pendingTapTime;
 
+        private float lastDodgeTapTime = -999f;
+        private string pendingDashStateId;
+        private float pendingDashDeadline;
+
         public Vector2 MoveInput { get; private set; }
         public bool IsRunning { get; private set; }
         public bool FacingRight { get; private set; } = true;
@@ -65,6 +77,9 @@ namespace KungFuVania.Player
             set => jumpCharges = value;
         }
         public float WallSlideSpeed => wallSlideSpeed;
+        public float ForwardDashDistance => forwardDashDistance;
+        public float BackDashDistance => backDashDistance;
+        public float DodgeDistance => dodgeDistance;
         public int MaxWallJumps
         {
             get => maxWallJumps;
@@ -121,6 +136,17 @@ namespace KungFuVania.Player
             }
 
             rb.linearVelocity = new Vector2(moveIntent * speed, rb.linearVelocity.y);
+        }
+
+        // Resolves a single-tap dash once its double-tap window has passed without a follow-up
+        // tap upgrading it to a roll — see HandleDodge.
+        private void Update()
+        {
+            if (pendingDashStateId != null && Time.time >= pendingDashDeadline)
+            {
+                combatStateMachine.TryEnterState(pendingDashStateId);
+                pendingDashStateId = null;
+            }
         }
 
         // Mass contest against a blocking NpcBlocker: heavier side "wins" and keeps moving at its
@@ -197,7 +223,29 @@ namespace KungFuVania.Player
             else targetState = "ATTACK_2";
             combatStateMachine.TryEnterState(targetState);
         }
-        private void HandleDodge() => combatStateMachine.TryEnterState("DODGE");
+        // Single tap = a short dash: forward if currently pressing the direction the player is
+        // facing, backward otherwise (so a neutral tap dashes back). Double tap = a longer roll,
+        // always in the facing direction. A tap can't be classified as single-vs-double until the
+        // window passes without a follow-up, so a single tap is buffered for dodgeDoubleTapWindow
+        // before it actually fires (see Update) — a double tap fires DODGE_ROLL immediately and
+        // cancels whatever single tap it superseded.
+        private void HandleDodge()
+        {
+            var isDoubleTap = Time.time - lastDodgeTapTime <= dodgeDoubleTapWindow;
+            lastDodgeTapTime = Time.time;
+
+            if (isDoubleTap)
+            {
+                pendingDashStateId = null;
+                combatStateMachine.TryEnterState("DODGE_ROLL");
+                return;
+            }
+
+            var facingSign = FacingRight ? 1f : -1f;
+            var pressingForward = MoveInput.x != 0f && Mathf.Sign(MoveInput.x) == facingSign;
+            pendingDashStateId = pressingForward ? "DASH_FORWARD" : "DASH_BACK";
+            pendingDashDeadline = Time.time + dodgeDoubleTapWindow;
+        }
 
         public void SetMoveIntent(float horizontalDirection, bool running)
         {

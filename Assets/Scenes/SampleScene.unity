@@ -467,6 +467,10 @@ MonoBehaviour:
   maxWallJumps: 0
   wallJumpVelocity: {x: 8, y: 12}
   wallStickTime: 0.2
+  forwardDashDistance: 1
+  backDashDistance: 1
+  dodgeDistance: 2
+  dodgeDoubleTapWindow: 0.25
 --- !u!114 &542349633
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -680,33 +684,10 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 256
   dodgeTotalDuration: 0.2
-  dodgeSpeedCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 12
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 1
-      value: 12
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
   dodgeIFrameStart: 0.05
   dodgeIFrameEnd: 0.15
   dodgeRecoveryDuration: 0.15
+  dodgeRollDurationMultiplier: 1.5
 --- !u!114 &542349641
 MonoBehaviour:
   m_ObjectHideFlags: 0

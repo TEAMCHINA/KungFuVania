@@ -22,6 +22,8 @@ namespace KungFuVania.Player.Combat
                 machine.ChangeState("NONE");
         }
 
+        public void FixedTick(float fixedDeltaTime) { }
+
         public void Exit() { }
     }
 }

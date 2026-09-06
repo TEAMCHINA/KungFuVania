@@ -19,10 +19,13 @@ namespace KungFuVania.Player
 
         [SerializeField] private LayerMask dodgeObstructionMask;
         [SerializeField] private float dodgeTotalDuration = 0.2f;
-        [SerializeField] private AnimationCurve dodgeSpeedCurve = AnimationCurve.Linear(0f, 12f, 1f, 12f);
         [SerializeField] private float dodgeIFrameStart = 0.05f;
         [SerializeField] private float dodgeIFrameEnd = 0.15f;
         [SerializeField] private float dodgeRecoveryDuration = 0.15f;
+        // Roll covers ~2x the distance of a dash but shouldn't cover it in the same time — that
+        // read as a near-teleport. Stretching its duration (i-frame timing stays absolute/
+        // unscaled) brings its effective speed down closer to the dash's instead of doubling it.
+        [SerializeField] private float dodgeRollDurationMultiplier = 1.5f;
 
         private readonly Dictionary<string, ICombatState> states = new();
         private ICombatState currentState;
@@ -47,7 +50,9 @@ namespace KungFuVania.Player
             states["CROUCH_ATTACK_1"] = new AttackState(this, crouchPunchData, "CROUCH_ATTACK_1");
             states["CROUCH_ATTACK_2"] = new AttackState(this, crouchKickData, "CROUCH_ATTACK_2");
             states["JUMP_KICK"] = new AttackState(this, jumpKickData, "JUMP_KICK", exitOnLanding: true);
-            states["DODGE"] = new DodgeState(this, dodgeTotalDuration, dodgeSpeedCurve, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask);
+            states["DASH_FORWARD"] = new DodgeState(this, dodgeTotalDuration, () => Controller.ForwardDashDistance, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask);
+            states["DASH_BACK"] = new DodgeState(this, dodgeTotalDuration, () => Controller.BackDashDistance, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask, reverseDirection: true);
+            states["DODGE_ROLL"] = new DodgeState(this, dodgeTotalDuration * dodgeRollDurationMultiplier, () => Controller.DodgeDistance, dodgeIFrameStart, dodgeIFrameEnd * dodgeRollDurationMultiplier, dodgeObstructionMask);
             states["DODGE_RECOVERY"] = new DodgeRecoveryState(this, dodgeRecoveryDuration);
         }
 
@@ -59,6 +64,12 @@ namespace KungFuVania.Player
         private void Update()
         {
             currentState?.Tick(Time.deltaTime);
+        }
+
+        // Physics-moving states (DodgeState) tick here instead — see ICombatState.FixedTick.
+        private void FixedUpdate()
+        {
+            currentState?.FixedTick(Time.fixedDeltaTime);
         }
 
         // Only succeeds from NONE — no combos this session. Crouch attacks require the player to
