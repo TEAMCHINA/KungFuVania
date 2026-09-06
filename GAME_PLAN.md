@@ -3887,22 +3887,22 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 
 ## 12. Build Order (Critical Path)
 
-| Order | File | Why first |
-|---|---|---|
-| 1 | `EventBus.cs` | Everything communicates through this |
-| 2 | `PlayerStateMachine.cs` | Gates all combat work |
-| 3 | `HitboxController.cs` / `HurtboxController.cs` | Damage pipeline |
-| 4 | `InputBuffer.cs` | Required before combo system |
-| 5 | `StaggerMeter.cs` | Required before combat tuning |
-| 6 | `StatSheet.cs` | Required before damage formula, health system, or chi pool |
-| 7 | `GameTickManager.cs` | Required before any tick-based aura |
-| 8 | `AuraManager.cs` + `AuraVisualController.cs` | Required before dodge, abilities, or status effects |
-| 9 | `EquipmentManager.cs` + `AbilityExecutionContext.cs` | Required before any ability executes damage |
-| 10 | `PlayerController` hooks (`ApplyImpulse`, `ForceLocomotionState`, etc.) | Required before any movement ability component |
-| 11 | `MotionInputBuffer.cs` + `MotionInputDetector.cs` | Required before any motion input ability |
-| 12 | `WorldStateManager.cs` | Room persistence and ability unlocks |
-| 13 | `CharacterCustomizationController.cs` | Requires WorldStateManager for unlock queries and save/load |
-| 14 | `CinematicDirector.cs` | Required before any boss content |
+| Order | File | Why first | Status |
+|---|---|---|---|
+| 1 | `EventBus.cs` | Everything communicates through this | ✅ Done |
+| 2 | `PlayerStateMachine.cs` | Gates all combat work | ✅ Done |
+| 3 | `HitboxController.cs` / `HurtboxController.cs` (+ `HurtboxZoneForwarder.cs`, `DamageCalculator.cs`) | Damage pipeline | ✅ Done — attacker-driven resolution, `Health.TakeDamage`/`OnEntityDamaged`, and hitbox reach authored via keyframed AnimationClip curves rather than a code reach-index; Head/Block/stagger/StatSheet still stubbed, see §3n |
+| 4 | `InputBuffer.cs` | Required before combo system | Not started |
+| 5 | `StaggerMeter.cs` | Required before combat tuning | Not started |
+| 6 | `StatSheet.cs` | Required before damage formula, health system, or chi pool | Not started |
+| 7 | `GameTickManager.cs` | Required before any tick-based aura | Not started |
+| 8 | `AuraManager.cs` + `AuraVisualController.cs` | Required before dodge, abilities, or status effects | Not started |
+| 9 | `EquipmentManager.cs` + `AbilityExecutionContext.cs` | Required before any ability executes damage | Not started |
+| 10 | `PlayerController` hooks (`ApplyImpulse`, `ForceLocomotionState`, etc.) | Required before any movement ability component | ✅ Done |
+| 11 | `MotionInputBuffer.cs` + `MotionInputDetector.cs` | Required before any motion input ability | Not started |
+| 12 | `WorldStateManager.cs` | Room persistence and ability unlocks | Not started |
+| 13 | `CharacterCustomizationController.cs` | Requires WorldStateManager for unlock queries and save/load | Not started |
+| 14 | `CinematicDirector.cs` | Required before any boss content | Not started |
 
 ---
 

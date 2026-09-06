@@ -93,7 +93,5 @@ local-space offset: `local = (pixel − pivotPixel) / spritePixelsToUnits`, with
 the bottom of the rect. Useful for placing a hitbox from a written spec, but eyeballing it live
 against the Scene view is simpler whenever the art's actually in front of you.
 
-## Status
-
-Currently bootstrapping. See `GAME_PLAN.md` Section 12 ("Build Order") for the implementation
-sequence — `EventBus.cs` is first and lives at `Assets/_Project/Scripts/Core/EventBus.cs`.
+Current build status and the full implementation sequence live in `GAME_PLAN.md` Section 12
+("Build Order").
