@@ -38,6 +38,7 @@ namespace KungFuVania.Player
         public Animator Animator { get; private set; }
         public HitboxController HitboxController => hitboxController;
         public HurtboxController HurtboxController => hurtboxController;
+        public string CurrentStateId => currentStateId;
 
         private void Awake()
         {

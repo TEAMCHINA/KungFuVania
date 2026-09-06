@@ -1,6 +1,7 @@
 using UnityEngine;
 using KungFuVania.Input;
 using KungFuVania.Actors;
+using KungFuVania.Combat;
 
 namespace KungFuVania.Player
 {
@@ -47,6 +48,7 @@ namespace KungFuVania.Player
         private CapsuleCollider2D capsule;
         private PlayerStateMachine stateMachine;
         private PlayerCombatStateMachine combatStateMachine;
+        private InputBuffer inputBuffer;
 
         private bool isGrounded;
         private bool physicsSuspended;
@@ -92,6 +94,7 @@ namespace KungFuVania.Player
             capsule = GetComponent<CapsuleCollider2D>();
             stateMachine = GetComponent<PlayerStateMachine>();
             combatStateMachine = GetComponent<PlayerCombatStateMachine>();
+            inputBuffer = GetComponent<InputBuffer>();
         }
 
         private void OnEnable()
@@ -147,6 +150,19 @@ namespace KungFuVania.Player
                 combatStateMachine.TryEnterState(pendingDashStateId);
                 pendingDashStateId = null;
             }
+        }
+
+        // Not in Update(): PlayerCombatStateMachine.Update() (which fires ChangeState("NONE") when
+        // an attack's clip ends) has no guaranteed order relative to this script's Update() — if it
+        // happens to run first in the same frame, retrying here would call Animator.Play() a second
+        // time before Unity ever evaluates the animator in between, and confirmed live, that second
+        // Play() call is just silently dropped (the animator stays on whatever the first call this
+        // frame requested). Unity runs its own animator evaluation between Update() and LateUpdate()
+        // for every script, so waiting for LateUpdate() guarantees a real evaluation already happened
+        // in between — same frame, no perceptible delay, but no longer racing the animator.
+        private void LateUpdate()
+        {
+            TryFireBufferedAttack();
         }
 
         // Mass contest against a blocking NpcBlocker: heavier side "wins" and keeps moving at its
@@ -213,24 +229,54 @@ namespace KungFuVania.Player
 
         private void HandleJump() => stateMachine.NotifyJumpPressed();
         private void HandleJumpCancelled() => stateMachine.NotifyJumpReleased();
-        private void HandleAttackLight()
+        // Every attack press lands in the buffer, full stop — no separate "fires immediately if
+        // idle" path. TryFireBufferedAttack (LateUpdate) is the one and only place that ever calls
+        // TryEnterState for an attack, whether that ends up happening the same frame it was pressed
+        // (nothing in the way) or several attacks later. A wrong-locomotion press (e.g. attacking
+        // mid wall-slide) still just fails and clears itself there one frame later — not worth a
+        // second code path to special-case.
+        private void HandleAttackLight() => inputBuffer.Record("LIGHT");
+        private void HandleAttackHeavy() => inputBuffer.Record("HEAVY");
+
+        // Re-run at consume time too (see TryFireBufferedAttack) rather than trusting whatever
+        // locomotion said back when the press was buffered — a crouch attack buffered while
+        // crouched should not fire if the player has since stood up.
+        private string ResolveAttackState(string attackAction)
         {
             var locomotionId = stateMachine.CurrentStateId;
-            string targetState;
-            if (locomotionId == "CROUCH") targetState = "CROUCH_ATTACK_1";
-            else if (locomotionId == "JUMP" || locomotionId == "FALL") targetState = "JUMP_PUNCH";
-            else targetState = "ATTACK_1";
-            combatStateMachine.TryEnterState(targetState);
+            var isCrouching = locomotionId == "CROUCH";
+            var isAirborne = locomotionId == "JUMP" || locomotionId == "FALL";
+
+            if (attackAction == "LIGHT")
+            {
+                if (isCrouching) return "CROUCH_ATTACK_1";
+                if (isAirborne) return "JUMP_PUNCH";
+                return "ATTACK_1";
+            }
+
+            if (isCrouching) return "CROUCH_ATTACK_2";
+            if (isAirborne) return "JUMP_KICK";
+            return "ATTACK_2";
         }
-        private void HandleAttackHeavy()
+
+        // The single entry point into combat for attacks (see HandleAttackLight/HandleAttackHeavy)
+        // — fires the freshest still-valid buffered press once the combat state machine is free.
+        // Deliberately not reacting to CombatStateChanged directly — that event is published from
+        // inside PlayerCombatStateMachine's own Tick, and firing TryEnterState from an event handler
+        // nested a second ChangeState/Publish inside the same call stack, same frame, as the one
+        // that just fired for the attack ending. Called from LateUpdate (see that method's comment)
+        // rather than Update, for the same reason: it needs a frame where Animator.Play("ATTACK_1")
+        // isn't racing another Play() call already made this frame. Re-resolves against current
+        // locomotion (ResolveAttackState) rather than trusting whatever locomotion was true when the
+        // press was buffered, and relies on TryEnterState's own eligibility gate to fail closed if
+        // that resolution is no longer valid (e.g. player left CROUCH).
+        private void TryFireBufferedAttack()
         {
-            var locomotionId = stateMachine.CurrentStateId;
-            string targetState;
-            if (locomotionId == "CROUCH") targetState = "CROUCH_ATTACK_2";
-            else if (locomotionId == "JUMP" || locomotionId == "FALL") targetState = "JUMP_KICK";
-            else targetState = "ATTACK_2";
-            combatStateMachine.TryEnterState(targetState);
+            if (combatStateMachine.CurrentStateId != "NONE") return;
+            if (inputBuffer.TryConsumeFreshest(out var attackAction))
+                combatStateMachine.TryEnterState(ResolveAttackState(attackAction));
         }
+
         // Single tap = a short dash: forward if currently pressing the direction the player is
         // facing, backward otherwise (so a neutral tap dashes back). Double tap = a longer roll,
         // always in the facing direction. A tap can't be classified as single-vs-double until the

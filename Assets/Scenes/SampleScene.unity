@@ -427,6 +427,7 @@ GameObject:
   - component: {fileID: 542349642}
   - component: {fileID: 542349641}
   - component: {fileID: 542349640}
+  - component: {fileID: 542349643}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -715,6 +716,19 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.HurtboxController
   hurtboxCollider: {fileID: 918580466}
+--- !u!114 &542349643
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 542349631}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4a9754e2604f48247bdaf10b894aa62f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.InputBuffer
+  expireWindow: 0.4
 --- !u!1 &619394800
 GameObject:
   m_ObjectHideFlags: 0
@@ -1686,12 +1700,12 @@ Transform:
   m_GameObject: {fileID: 1043496707}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0.5, y: 0.9, z: 0}
+  m_LocalPosition: {x: 0.57, y: 0.3, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 542349637}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: -42.642}
 --- !u!114 &1043496710
 MonoBehaviour:
   m_ObjectHideFlags: 0

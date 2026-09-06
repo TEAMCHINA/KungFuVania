@@ -1064,6 +1064,17 @@ StatSheet    casterStats
 string       abilityId
 ```
 
+**Decided: snapshot, don't hold a live reference, for anything that can resolve later.** A melee
+hit resolves the same frame `BuildContext` runs, so reading `casterStats` live costs nothing. A
+projectile does not — it can still be in flight when `DamageCalculator.Resolve()` finally runs
+against it. For that case, the stat contributions `casterStats` would otherwise supply must be
+baked into concrete numbers on the context at `BuildContext` time, same as equipment modifiers
+already are, rather than resolved live off the reference at impact. This keeps a thrown effect
+fully self-contained the instant it leaves the caster — no dependency on the caster still existing
+or being in the same state by the time it lands, and no risk of it retroactively getting
+stronger or weaker from something that happened after the throw. Applies generally to anything
+in this project that detaches from its creator and acts later, not just projectiles.
+
 #### AbilityModifierSO
 
 Abstract ScriptableObject. Item and upgrade designers subclass this — one class per modifier
@@ -3896,7 +3907,7 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 | 1 | `EventBus.cs` | Everything communicates through this | ✅ Done |
 | 2 | `PlayerStateMachine.cs` | Gates all combat work | ✅ Done |
 | 3 | `HitboxController.cs` / `HurtboxController.cs` (+ `HurtboxZoneForwarder.cs`, `DamageCalculator.cs`) | Damage pipeline | ✅ Done — attacker-driven resolution, `Health.TakeDamage`/`OnEntityDamaged`, and hitbox reach authored via keyframed AnimationClip curves rather than a code reach-index; Head/Block/stagger/StatSheet still stubbed, see §3n |
-| 4 | `InputBuffer.cs` | Required before combo system | Not started |
+| 4 | `InputBuffer.cs` | Required before combo system | ✅ Done — `InputBuffer.cs` (`KungFuVania.Combat`), a capacity-16 timestamped ring buffer on the Player. `PlayerController` buffers a light/heavy attack press only when `TryEnterState` fails because the combat state machine is busy (not for any other rejection reason), then on return to `NONE` re-resolves the crouch/air/ground target state fresh against current locomotion — never a press-time snapshot — before retrying through `TryEnterState`, so a stale buffered attack fails closed instead of firing in a context it's no longer valid for. One flat `[SerializeField]` expiry window (0.4s, tuned to safely outlast the busiest current attack clip), measured from the press itself; no per-step `inputBufferWindow`/`inputExpireWindow` or cancellable-frame gating yet — that's `ComboSystem`/`ComboStep`'s job once combos exist |
 | 5 | `MotionInputBuffer.cs` + `MotionInputDetector.cs` | Moved up ahead of Stagger/Stat/Aura/Equipment — a matched pattern only needs to fire *something*, and can do that as a trimmed flat-damage attack today (same trim `DamageCalculator` already uses, see row 3) rather than waiting on the full `AbilityExecutionContext` chain. Facing-relative zone mirroring (which way "forward" snaps to when facing left) isn't designed yet — flagged, not solved, see §3l. | Not started |
 | 6 | `ProjectileController.cs` (name provisional — no design section written yet) | Carrier for any traveling special fired by Motion Input System (e.g. a fireball); see the note at the end of §3l. Listed after Motion Input System here for build-order bookkeeping only — functionally it needs to land alongside or before it, since a matched motion has nothing to fire without it. | Not started — no design section yet |
 | 7 | `StaggerMeter.cs` | Required before combat tuning | Not started |
