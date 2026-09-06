@@ -1278,6 +1278,10 @@ abilities. Detection is entirely separate from the combo system — different bu
 SO type, different detector. Once a motion is matched it fires through the existing
 `AbilityExecutionContext` pipeline identically to any other ability.
 
+A traveling special (e.g. a fireball) additionally needs a projectile carrier — see Build
+Order §12 row 6. Every existing attack's hitbox is a child transform of its attacker, keyframed
+on that attacker's own clip; nothing here models a detached, independently-moving collider.
+
 #### Advanced Combat Mode
 
 Holding the assigned button (e.g. left bumper) sets one flag on `PlayerController`:
@@ -3893,16 +3897,17 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 | 2 | `PlayerStateMachine.cs` | Gates all combat work | ✅ Done |
 | 3 | `HitboxController.cs` / `HurtboxController.cs` (+ `HurtboxZoneForwarder.cs`, `DamageCalculator.cs`) | Damage pipeline | ✅ Done — attacker-driven resolution, `Health.TakeDamage`/`OnEntityDamaged`, and hitbox reach authored via keyframed AnimationClip curves rather than a code reach-index; Head/Block/stagger/StatSheet still stubbed, see §3n |
 | 4 | `InputBuffer.cs` | Required before combo system | Not started |
-| 5 | `StaggerMeter.cs` | Required before combat tuning | Not started |
-| 6 | `StatSheet.cs` | Required before damage formula, health system, or chi pool | Not started |
-| 7 | `GameTickManager.cs` | Required before any tick-based aura | Not started |
-| 8 | `AuraManager.cs` + `AuraVisualController.cs` | Required before dodge, abilities, or status effects | Not started |
-| 9 | `EquipmentManager.cs` + `AbilityExecutionContext.cs` | Required before any ability executes damage | Not started |
-| 10 | `PlayerController` hooks (`ApplyImpulse`, `ForceLocomotionState`, etc.) | Required before any movement ability component | ✅ Done |
-| 11 | `MotionInputBuffer.cs` + `MotionInputDetector.cs` | Required before any motion input ability | Not started |
-| 12 | `WorldStateManager.cs` | Room persistence and ability unlocks | Not started |
-| 13 | `CharacterCustomizationController.cs` | Requires WorldStateManager for unlock queries and save/load | Not started |
-| 14 | `CinematicDirector.cs` | Required before any boss content | Not started |
+| 5 | `MotionInputBuffer.cs` + `MotionInputDetector.cs` | Moved up ahead of Stagger/Stat/Aura/Equipment — a matched pattern only needs to fire *something*, and can do that as a trimmed flat-damage attack today (same trim `DamageCalculator` already uses, see row 3) rather than waiting on the full `AbilityExecutionContext` chain. Facing-relative zone mirroring (which way "forward" snaps to when facing left) isn't designed yet — flagged, not solved, see §3l. | Not started |
+| 6 | `ProjectileController.cs` (name provisional — no design section written yet) | Carrier for any traveling special fired by Motion Input System (e.g. a fireball); see the note at the end of §3l. Listed after Motion Input System here for build-order bookkeeping only — functionally it needs to land alongside or before it, since a matched motion has nothing to fire without it. | Not started — no design section yet |
+| 7 | `StaggerMeter.cs` | Required before combat tuning | Not started |
+| 8 | `StatSheet.cs` | Required before damage formula, health system, or chi pool | Not started |
+| 9 | `GameTickManager.cs` | Required before any tick-based aura | Not started |
+| 10 | `AuraManager.cs` + `AuraVisualController.cs` | Required before dodge, abilities, or status effects | Not started |
+| 11 | `EquipmentManager.cs` + `AbilityExecutionContext.cs` | Required before any ability executes damage | Not started |
+| 12 | `PlayerController` hooks (`ApplyImpulse`, `ForceLocomotionState`, etc.) | Required before any movement ability component | ✅ Done |
+| 13 | `WorldStateManager.cs` | Room persistence and ability unlocks | Not started |
+| 14 | `CharacterCustomizationController.cs` | Requires WorldStateManager for unlock queries and save/load | Not started |
+| 15 | `CinematicDirector.cs` | Required before any boss content | Not started |
 
 ---
 
@@ -3910,3 +3915,6 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 
 - **Parallax background layers** (§3t) — blocked on `CameraManager`/`CameraTarget` actually
   moving; see the note in Camera System above.
+- **Projectile system** (Build Order §12 row 6) — no dedicated design section yet (spawn,
+  travel, collision-once, cleanup for a detached, independently-moving hitbox). Needed before
+  any projectile-based special, motion-input-triggered or otherwise, can do anything on hit.
