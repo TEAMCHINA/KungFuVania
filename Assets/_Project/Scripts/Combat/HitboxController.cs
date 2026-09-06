@@ -47,6 +47,9 @@ namespace KungFuVania.Combat
             hitboxCollider.enabled = true;
         }
 
-        public void Deactivate(int index) => hitboxCollider.enabled = false;
+        public void Deactivate() => hitboxCollider.enabled = false;
+
+        // index is unused — kept so HitboxEventRelay's animation-event signature matches Activate's.
+        public void Deactivate(int index) => Deactivate();
     }
 }

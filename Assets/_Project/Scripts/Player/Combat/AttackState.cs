@@ -48,6 +48,10 @@ namespace KungFuVania.Player.Combat
 
         public void FixedTick(float fixedDeltaTime) { }
 
-        public void Exit() { }
+        // Guarantees the hitbox ends up off no matter how this state exits. The normal path
+        // (clip reaches normalizedTime 1) already turned it off via the OnHitboxInactive event,
+        // so this is a no-op then — but exitOnLanding can cut the clip away before that event's
+        // keyframe is ever reached, which used to leave the collider stuck enabled.
+        public void Exit() => machine.HitboxController.Deactivate();
     }
 }
