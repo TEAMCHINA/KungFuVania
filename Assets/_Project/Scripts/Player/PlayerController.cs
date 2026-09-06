@@ -213,7 +213,15 @@ namespace KungFuVania.Player
 
         private void HandleJump() => stateMachine.NotifyJumpPressed();
         private void HandleJumpCancelled() => stateMachine.NotifyJumpReleased();
-        private void HandleAttackLight() => combatStateMachine.TryEnterState(stateMachine.CurrentStateId == "CROUCH" ? "CROUCH_ATTACK_1" : "ATTACK_1");
+        private void HandleAttackLight()
+        {
+            var locomotionId = stateMachine.CurrentStateId;
+            string targetState;
+            if (locomotionId == "CROUCH") targetState = "CROUCH_ATTACK_1";
+            else if (locomotionId == "JUMP" || locomotionId == "FALL") targetState = "JUMP_PUNCH";
+            else targetState = "ATTACK_1";
+            combatStateMachine.TryEnterState(targetState);
+        }
         private void HandleAttackHeavy()
         {
             var locomotionId = stateMachine.CurrentStateId;

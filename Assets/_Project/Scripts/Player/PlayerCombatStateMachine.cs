@@ -16,6 +16,7 @@ namespace KungFuVania.Player
         [SerializeField] private HitboxDataSO crouchPunchData;
         [SerializeField] private HitboxDataSO crouchKickData;
         [SerializeField] private HitboxDataSO jumpKickData;
+        [SerializeField] private HitboxDataSO jumpPunchData;
 
         [SerializeField] private LayerMask dodgeObstructionMask;
         [SerializeField] private float dodgeTotalDuration = 0.2f;
@@ -50,6 +51,7 @@ namespace KungFuVania.Player
             states["CROUCH_ATTACK_1"] = new AttackState(this, crouchPunchData, "CROUCH_ATTACK_1");
             states["CROUCH_ATTACK_2"] = new AttackState(this, crouchKickData, "CROUCH_ATTACK_2");
             states["JUMP_KICK"] = new AttackState(this, jumpKickData, "JUMP_KICK", exitOnLanding: true);
+            states["JUMP_PUNCH"] = new AttackState(this, jumpPunchData, "JUMP_PUNCH", exitOnLanding: true);
             states["DASH_FORWARD"] = new DodgeState(this, dodgeTotalDuration, () => Controller.ForwardDashDistance, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask);
             states["DASH_BACK"] = new DodgeState(this, dodgeTotalDuration, () => Controller.BackDashDistance, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask, reverseDirection: true);
             states["DODGE_ROLL"] = new DodgeState(this, dodgeTotalDuration * dodgeRollDurationMultiplier, () => Controller.DodgeDistance, dodgeIFrameStart, dodgeIFrameEnd * dodgeRollDurationMultiplier, dodgeObstructionMask);
@@ -112,6 +114,6 @@ namespace KungFuVania.Player
         private static bool IsCrouchAttack(string stateId) =>
             stateId == "CROUCH_ATTACK_1" || stateId == "CROUCH_ATTACK_2";
 
-        private static bool IsAerialAttack(string stateId) => stateId == "JUMP_KICK";
+        private static bool IsAerialAttack(string stateId) => stateId == "JUMP_KICK" || stateId == "JUMP_PUNCH";
     }
 }

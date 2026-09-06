@@ -680,6 +680,7 @@ MonoBehaviour:
   crouchPunchData: {fileID: 11400000, guid: 62a30b82cfa1cf247a67e7cb40fbbd95, type: 2}
   crouchKickData: {fileID: 11400000, guid: 2a8f8225a3f66164d84f0a045dd613ab, type: 2}
   jumpKickData: {fileID: 11400000, guid: 9bd907c7d27815347bd3a34270658e51, type: 2}
+  jumpPunchData: {fileID: 11400000, guid: 9d3474926ecccf9498e117f1319566ae, type: 2}
   dodgeObstructionMask:
     serializedVersion: 2
     m_Bits: 256
