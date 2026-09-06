@@ -11,8 +11,6 @@ namespace KungFuVania.Combat
     {
         [SerializeField] private float maxHealth = 50f;
 
-        private HurtboxController hurtbox;
-
         public float MaxHealth => maxHealth;
         public float CurrentHealth { get; private set; }
 
@@ -21,14 +19,10 @@ namespace KungFuVania.Combat
 
         private void Awake()
         {
-            hurtbox = GetComponent<HurtboxController>();
             CurrentHealth = maxHealth;
         }
 
-        private void OnEnable() => hurtbox.OnHit += HandleHit;
-        private void OnDisable() => hurtbox.OnHit -= HandleHit;
-
-        private void HandleHit(float damage, bool isLow)
+        public void TakeDamage(float damage)
         {
             CurrentHealth = Mathf.Max(0f, CurrentHealth - damage);
             OnDamaged?.Invoke();

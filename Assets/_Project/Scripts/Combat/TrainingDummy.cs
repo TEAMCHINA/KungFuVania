@@ -1,4 +1,5 @@
 using UnityEngine;
+using KungFuVania.Core;
 
 namespace KungFuVania.Combat
 {
@@ -11,16 +12,10 @@ namespace KungFuVania.Combat
         [SerializeField] private Sprite struckLowSprite;
         [SerializeField] private float struckPoseDuration = 0.2f;
 
-        private HurtboxController hurtbox;
         private float struckUntil;
 
-        private void Awake()
-        {
-            hurtbox = GetComponent<HurtboxController>();
-        }
-
-        private void OnEnable() => hurtbox.OnHit += HandleHit;
-        private void OnDisable() => hurtbox.OnHit -= HandleHit;
+        private void OnEnable() => EventBus.Subscribe<OnEntityDamaged>(HandleDamaged);
+        private void OnDisable() => EventBus.Unsubscribe<OnEntityDamaged>(HandleDamaged);
 
         private void Update()
         {
@@ -28,10 +23,12 @@ namespace KungFuVania.Combat
                 spriteRenderer.sprite = idleSprite;
         }
 
-        private void HandleHit(float damage, bool isLow)
+        private void HandleDamaged(OnEntityDamaged evt)
         {
+            if (evt.Target != gameObject) return;
+
             struckUntil = Time.time + struckPoseDuration;
-            if (spriteRenderer != null) spriteRenderer.sprite = isLow ? struckLowSprite : struckHighSprite;
+            if (spriteRenderer != null) spriteRenderer.sprite = evt.IsLowHit ? struckLowSprite : struckHighSprite;
         }
     }
 }

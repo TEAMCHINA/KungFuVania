@@ -6,7 +6,7 @@ namespace KungFuVania.Combat
     {
         [SerializeField] private HitboxController hitboxController;
 
-        public void OnHitboxActive(int hitboxIndex) => hitboxController.Activate(hitboxIndex);
-        public void OnHitboxInactive(int hitboxIndex) => hitboxController.Deactivate(hitboxIndex);
+        public void OnHitboxActive() => hitboxController.Activate();
+        public void OnHitboxInactive() => hitboxController.Deactivate();
     }
 }

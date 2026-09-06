@@ -1514,16 +1514,26 @@ low-height hit (e.g. a struck-low pose in response to a sweep or crouch-kick). O
 does (see Damage Resolution below). There's no damage or stagger modifier tied to it today, just an
 `isLowHit` flag alongside the normal hit, read by whatever picks the struck pose.
 
-This session's `HurtboxController` doesn't yet have the full `HurtboxZoneForwarder` /
-`OnZoneHit(zoneType, other)` / `LateFixedUpdate` pipeline described above (no `DamageCalculator`,
-`ICombatStateProvider`, or `blockResult` exist yet either — still trimmed to body-only). The minimal
-stand-in used for `Hurtbox_Low`: `HurtboxController` holds an optional `lowHurtboxCollider`
-reference, and on every `OnTriggerEnter2D` (which, same as `Hurtbox_Head` would, fires once per own
-collider touched — a hit overlapping both `Hurtbox_Body` and `Hurtbox_Low` calls this method twice)
-it geometrically checks `lowHurtboxCollider.IsTouching(other)` and records the flag, deferring the
-actual `OnHit` invocation to `LateUpdate` so the redundant calls collapse into exactly one
-resolution per hit. Swap this for the real forwarder/zoneType pipeline once `Hurtbox_Head`/
-`Hurtbox_Block` are actually built.
+**Current implementation status**: the real `HurtboxZoneForwarder` / `OnZoneHit(zoneType, other)` /
+`HitboxController.LateFixedUpdate` pipeline described above is built, but trimmed to `Body` and
+`Low` zones only — `Hurtbox_Head`/`Hurtbox_Block`, `DamageCalculator`'s block/head/stagger
+modifiers, `ICombatStateProvider`, and `blockResult` don't exist yet. Each zone (`Hurtbox`/
+`Hurtbox_Body` and, where present, `Hurtbox_Low`) carries its own `HurtboxZoneForwarder` component
+tied to that zone's own collider, so a hit touching multiple zones resolves unambiguously per zone
+instead of collapsing into one shared `OnTriggerEnter2D`. Resolution itself is **attacker-driven**,
+not defender-driven: a forwarder's `OnTriggerEnter2D` calls `HitboxController.OnZoneHit(zoneType,
+target)` on the *attacker's* hitbox, which records per-target Body/Low contact and resolves each
+target independently in `LateFixedUpdate` (implemented via Unity's real `LateUpdate`, since no
+native `LateFixedUpdate` message exists) — this is what makes "multiple simultaneous attackers"
+and "one attack hitting multiple targets" both fall out for free, with no shared inbox on either
+side to overwrite. `HurtboxController` itself is minimal today: just the `hurtboxCollider`
+reference and `SetInvulnerable`'s reference-counted i-frame gate — it has no `OnTriggerEnter2D`,
+no pending-hit state, and no zone-metadata fields, since `Low`'s flag lives on the attacker's
+`HitboxController` instead. `DamageCalculator.Resolve(HitboxDataSO, HurtboxController target, bool
+isLowHit, object attackerStats = null)` applies `Health.TakeDamage` directly and publishes
+`OnEntityDamaged` (target, damage, isLowHit) via `EventBus` — `attackerStats` is an unused,
+null-checked stub seam for the future StatSheet system. Swap in the fuller pipeline (block, head,
+stagger, `ICombatStateProvider`) once `Hurtbox_Head`/`Hurtbox_Block` are actually built.
 
 #### Hurtbox Pose Matching
 
@@ -1604,25 +1614,42 @@ Events** on a single intermediate MonoBehaviour — `HitboxEventRelay` — mount
 
 ```csharp
 // Called by Animation Events only — the animator knows these events, nothing else
-void OnHitboxActive(int hitboxIndex)    // 0 = primary, 1 = secondary
-void OnHitboxInactive(int hitboxIndex)
+void OnHitboxActive()                   // enables the hitbox collider — no index; see below
+void OnHitboxInactive()                 // disables it
 void OnInvulnerableStart()              // i-frame window begins (dodge handled by DodgeSystem directly)
 void OnInvulnerableEnd()                // i-frame window ends
 ```
 
+**Current implementation**: `OnHitboxActive`/`OnHitboxInactive` are parameterless — there's only
+one hitbox (`Hitbox`) today, `Hitbox_Secondary` isn't built yet, and reach/shape no longer come
+from an index at all. Instead, the `Hitbox` child's `localPosition` and its `BoxCollider2D`'s
+`size`/`offset` are keyframed directly in each attack's own AnimationClip (constant across the
+clip for attacks with a fixed reach; nothing stops a future clip from varying them, e.g. for a
+non-axis-aligned reach an index-based system couldn't express). The player's facing flip moved
+from `SpriteRenderer.flipX` to `transform.localScale.x` on the Player root, so the animated Hitbox
+transform mirrors automatically along with everything else parented under the root — matching how
+NPCs already flip — instead of `HitboxController` re-deriving a sign per pose from `FacingRight`.
+
 `HitboxEventRelay` forwards hitbox calls to `HitboxController` and invulnerability calls to
 `HurtboxController`. Hurtbox shape is not driven by animation events — it is keyframed directly
-on `HurtboxController` properties from the Animation window (see Hurtbox Pose Matching above).
+on `HurtboxController` properties from the Animation window (see Hurtbox Pose Matching above; not
+yet built — see status note below the Authoring hierarchy diagram).
+
+Step-by-step Animation-window instructions for keyframing an attack's hitbox live in
+[`README.md`](./README.md) under Development Workflows, not here — this document stays
+architecture/status, not a how-to.
 
 #### HitboxController
 
-Manages the two hitbox colliders and owns the current `HitboxDataSO` reference for each active swing:
+Manages the hitbox collider(s) and owns the current `HitboxDataSO` reference for each active swing
+(today: just `Hitbox_Primary` — `Hitbox_Secondary` isn't built yet):
 
 ```csharp
 HitboxDataSO  activeHitboxData    // set by the AttackSO before the animation plays
-void Activate(int index)           // enables collider[index]
-void Deactivate(int index)         // disables collider[index]
-// OnTriggerEnter2D — see resolution below
+void Activate()                    // enables the hitbox collider — geometry comes from the clip's own curves
+void Deactivate()                  // disables it
+void OnZoneHit(HurtboxZoneType zoneType, HurtboxController target)  // called by that target's forwarder
+void LateFixedUpdate()              // resolves each target hit this step exactly once; see Damage Resolution
 ```
 
 When a combat state is entered, the `AttackSO` (or `ComboStep`) pushes its `HitboxDataSO` to
@@ -1630,6 +1657,12 @@ When a combat state is entered, the `AttackSO` (or `ComboStep`) pushes its `Hitb
 when the trigger fires.
 
 #### HurtboxController
+
+**Current implementation**: none of this section is built yet except `SetInvulnerable` (real,
+reference-counted, gating a single `hurtboxCollider` field rather than a whole `hurtboxBodyObject`
+— there's no Head/Block child to cascade to today). No `BlockResult`, `isHeadHit`, or
+`ICombatStateProvider`; detection/resolution live on the attacker's `HitboxController` instead (see
+Authoring status note above and Damage Resolution below).
 
 ```csharp
 enum BlockResult {
@@ -1743,6 +1776,15 @@ HitboxController.LateFixedUpdate — runs when Hurtbox_Body contact was recorded
 
   5. Reset blockResult and isHeadHit; clear pending contact flag
 ```
+
+**Current implementation**: steps 2–3 (block, head modifiers) and the StatSheet/armor/stagger
+parts of step 4 aren't built yet — today's `LateFixedUpdate` only has Body/Low. It walks every
+target that got a Body contact this step, and for each calls `DamageCalculator.Resolve(
+activeHitboxData, target, isLowHit, attackerStats: null)` where `isLowHit` is just whether that
+same target also got a Low contact this step. `Resolve` applies `activeHitboxData.damage` straight
+to `target.GetComponent<Health>().TakeDamage(...)` and publishes `OnEntityDamaged { Target, Damage,
+IsLowHit }` — no `ctx`/multipliers/stagger/StatSheet yet, those are the seam `attackerStats` (always
+null, unused) leaves open for later.
 
 `DamageCalculator` applies damage directly and publishes results via EventBus. No response object
 is returned — EventBus subscribers handle state reactions without coupling to the calculator.

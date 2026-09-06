@@ -715,7 +715,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.HurtboxController
   hurtboxCollider: {fileID: 918580466}
-  lowHurtboxCollider: {fileID: 0}
 --- !u!1 &619394800
 GameObject:
   m_ObjectHideFlags: 0
@@ -1079,6 +1078,7 @@ GameObject:
   - component: {fileID: 873162363}
   - component: {fileID: 873162362}
   - component: {fileID: 873162361}
+  - component: {fileID: 873162364}
   m_Layer: 11
   m_Name: TrainingDummy
   m_TagString: Untagged
@@ -1116,7 +1116,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.HurtboxController
   hurtboxCollider: {fileID: 873162356}
-  lowHurtboxCollider: {fileID: 1396954225}
 --- !u!61 &873162356
 BoxCollider2D:
   m_ObjectHideFlags: 0
@@ -1324,6 +1323,20 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.Health
   maxHealth: 50
+--- !u!114 &873162364
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 873162353}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 42b6a69a2c833c64c9d49995a592efa3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.HurtboxZoneForwarder
+  hurtboxController: {fileID: 873162355}
+  zoneType: 0
 --- !u!1 &913269940
 GameObject:
   m_ObjectHideFlags: 0
@@ -1365,6 +1378,7 @@ GameObject:
   m_Component:
   - component: {fileID: 918580467}
   - component: {fileID: 918580466}
+  - component: {fileID: 918580468}
   m_Layer: 10
   m_Name: Hurtbox
   m_TagString: Untagged
@@ -1433,6 +1447,20 @@ Transform:
   m_Children: []
   m_Father: {fileID: 542349637}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &918580468
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 918580465}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 42b6a69a2c833c64c9d49995a592efa3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.HurtboxZoneForwarder
+  hurtboxController: {fileID: 542349642}
+  zoneType: 0
 --- !u!1 &1011980999
 GameObject:
   m_ObjectHideFlags: 0
@@ -1677,10 +1705,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.HitboxController
   hitboxCollider: {fileID: 1043496708}
-  facingSource: {fileID: 542349632}
-  crouchMidLocalOffsetY: 0.55
-  crouchLowLocalOffsetY: 0.15
-  crouchHitboxSize: {x: 0.375, y: 0.3125}
   activeHitboxData: {fileID: 0}
 --- !u!1 &1396954224
 GameObject:
@@ -1692,6 +1716,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1396954226}
   - component: {fileID: 1396954225}
+  - component: {fileID: 1396954227}
   m_Layer: 11
   m_Name: Hurtbox_Low
   m_TagString: Untagged
@@ -1760,6 +1785,20 @@ Transform:
   m_Children: []
   m_Father: {fileID: 873162358}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1396954227
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1396954224}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 42b6a69a2c833c64c9d49995a592efa3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.HurtboxZoneForwarder
+  hurtboxController: {fileID: 873162355}
+  zoneType: 1
 --- !u!1 &1551235990
 GameObject:
   m_ObjectHideFlags: 0

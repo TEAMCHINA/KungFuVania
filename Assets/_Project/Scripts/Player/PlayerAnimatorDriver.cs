@@ -11,7 +11,6 @@ namespace KungFuVania.Player
 
         private Animator animator;
         private PlayerController controller;
-        private SpriteRenderer spriteRenderer;
         private string pendingStateId;
         private float landingUntil;
 
@@ -22,7 +21,6 @@ namespace KungFuVania.Player
         {
             animator = GetComponent<Animator>();
             controller = GetComponent<PlayerController>();
-            spriteRenderer = GetComponent<SpriteRenderer>();
             animator.Update(0f);
         }
 
@@ -48,7 +46,9 @@ namespace KungFuVania.Player
                 pendingStateId = null;
             }
 
-            spriteRenderer.flipX = !controller.FacingRight;
+            // Mirrors the whole root (and its Hitbox/Hurtbox children) instead of just the sprite,
+            // matching how NPCs already flip — see SESSION_PLAN.md hitbox authoring refactor.
+            transform.localScale = new Vector3(controller.FacingRight ? 1f : -1f, 1f, 1f);
         }
 
         private void HandleLocomotionChanged(PlayerStateChanged evt)
