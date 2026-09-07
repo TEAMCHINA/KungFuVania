@@ -698,7 +698,7 @@ AnimationClip animationOverride      // combo-specific animation variant
 bool isDefensiveCancellable          // default true — parry/block press immediately interrupts
 bool isComboBufferCancellable        // default true — buffered combo input fires at cancellable frame
 bool canCancelIntoSpecial            // default false — attack can 2-in-1 cancel into a motion input
-                                     // special ON HIT only; requires advancedCombatActive naturally
+                                     // special ON HIT only; requires ChiModeActive naturally
                                      // since specials already gate on it
 
 // Armor
@@ -754,17 +754,18 @@ hit actually connected.
 Attack with canCancelIntoSpecial = true swings:
   ├─ Hit connects (HurtboxController overlap confirmed)
   │   → hitConnected flag set for this ComboStep
-  │   → MotionInputDetector checks buffer for a valid motion pattern
-  │     ├─ Pattern matched + advancedCombatActive = true → special fires, cancels recovery
+  │   → MotionInputDetector checks whether its trie is currently sitting on a valid,
+  │     button-matching motion pattern (see §3l — this is a trie walk, not a buffer scan)
+  │     ├─ Pattern matched + ChiModeActive = true → special fires, cancels recovery
   │     └─ No match → attack plays out normally
   └─ Whiff (no hit confirmed)
       → canCancelIntoSpecial is ignored; attack plays to end
 ```
 
-The `advancedCombatActive` requirement is **not an additional gate** — it is already
-enforced naturally, since only motion input specials are valid cancel targets, and those
-already require `advancedCombatActive` to detect. Players without `ADVANCED_COMBAT`
-unlocked simply cannot perform the cancel, with no extra logic needed.
+The `ChiModeActive` requirement is **not an additional gate** — it is already enforced
+naturally, since only motion input specials are valid cancel targets, and those already
+require `ChiModeActive` to detect. Players without `CHI_MODE` unlocked simply cannot perform
+the cancel, with no extra logic needed.
 
 **Design intent:**
 - Whiff punishing is preserved — specials cannot be thrown out safely without landing
@@ -1391,27 +1392,59 @@ A traveling special (e.g. a fireball) additionally needs a projectile carrier �
 attacker, keyframed on that attacker's own clip; nothing about that model covers a detached,
 independently-moving collider.
 
-#### Advanced Combat Mode
+#### Chi Mode
 
-Holding the assigned button (e.g. left bumper) sets one flag on `PlayerController`:
+(Sketched earlier in this doc as "Advanced Combat Mode" — renamed to "Chi Mode" once actually
+built; every reference below and in code uses the new name.)
+
+Holding the assigned button — `<Keyboard>/leftShift` or `<Gamepad>/leftShoulder` — sets one
+flag on `PlayerController`:
 
 ```csharp
-bool advancedCombatActive
-// in movement update: if (!advancedCombatActive) { UpdateFacing(moveInput); }
+bool ChiModeActive => chiModeUnlocked && chiModeHeld && !chiModeSuppressedUntilRelease;
+// in movement update: if (!ChiModeActive) { UpdateFacing(moveInput); }
 ```
 
 While active:
-- Facing direction is locked — the character won't turn around during stick rotations
-- `MotionInputDetector` walks its trie against action button presses (see below)
-- Movement speed is unchanged
+- **Facing direction is locked** — the character won't turn around during stick rotations,
+  and this is load-bearing, not cosmetic: `MotionInputDetector`'s zone mirroring is
+  facing-relative (§3l "Analog Stick → Zone Mapping"), so if facing flipped mid-sequence the
+  "toward/away" meaning of every zone would invert underneath an in-progress motion.
+- **Walking is not locked** — an earlier version of this design zeroed horizontal velocity and
+  froze the locomotion FSM entirely, on the theory that the stick needed to be a dedicated
+  motion-input device. Reverted: the same stick input drives both real movement and motion
+  detection simultaneously, exactly like it does in actual fighting games — walking backward
+  (pressing away from a locked facing) works the same as it does outside Chi Mode. Only facing
+  itself is suppressed (see `PlayerController.HandleMove`); `PlayerStateMachine` ticks normally.
+- `MotionInputDetector` walks its trie against the (facing-locked, still fully live) stick/d-pad
+  zone (see below)
+- **Pressing a confirm button (light or heavy attack) always ends Chi Mode**, whether or not
+  it also fired a special — see "On button press" below. Ending it this way is sticky even if
+  the Chi Mode button is still physically held down: it stays off until the player releases
+  that button and presses it again (`chiModeSuppressedUntilRelease`), not merely "as long as
+  it's held." An ordinary release (no attack button involved) ends Chi Mode the plain way and
+  clears that same latch, so the very next press re-engages cleanly.
+- **Block is the one planned exception to all of the above** — once Block exists, holding it
+  should be the only input that does *not* cancel Chi Mode the way every other action does.
+  Not implemented: Block itself doesn't exist anywhere in this codebase yet. Flagged here so
+  whoever builds Block carves out this interaction rather than letting it fall through to the
+  generic cancel path.
 
-The `ADVANCED_COMBAT` ability must be unlocked before the button does anything.
-Pressing it before unlock has no effect — the flag simply never sets.
+The `CHI_MODE` ability must be unlocked before the button does anything. Pressing it before
+unlock has no effect — the flag simply never sets. No `WorldStateManager`-driven unlock exists
+yet (§4 Ability Gates) — `chiModeUnlocked` is a plain manually-toggled bool on `PlayerController`
+for now, same precedent as its `jumpCharges`/`maxWallJumps`.
 
 #### Analog Stick → Zone Mapping
 
-The raw stick `Vector2` is converted to a single integer zone every frame before reaching
-the trie walker (see `MotionInputDetector` below). Three steps:
+The d-pad is bound to the same `Move` action as the left stick — an additional plain binding,
+not a composite, fully redundant with the analog stick rather than a separate input path.
+Nothing downstream of `PlayerController.MoveInput` can tell which one produced a given value,
+nor needs to.
+
+The raw stick `Vector2` (analog or digital, whichever produced it) is converted to a single
+integer zone every frame before reaching the trie walker (see `MotionInputDetector` below).
+Three steps:
 
 **1. Dead zone check**
 If `stick.magnitude < zoneDeadzone` → zone 5 (neutral). Prevents drift registering as input.
@@ -1488,7 +1521,12 @@ public class MotionInputTriggerSO : TriggerSO {
     }
 
     MotionStep[] sequence        // ordered steps
-    InputAction  confirmButton   // OnAttackLight, OnAttackHeavy, OnAbility1, etc.
+    string       confirmButton   // "LIGHT" / "HEAVY" — as-built deviation from an earlier
+                                  // InputAction sketch here: matches the plain-string attack-
+                                  // identity convention InputBuffer/PlayerController.Resolve-
+                                  // AttackState already use everywhere else, and a live
+                                  // InputAction reference doesn't serialize cleanly onto an SO
+                                  // asset anyway
     float        sequenceWindow  // max seconds for the WHOLE sequence, from first step to last —
                                   // not per-step; see MotionInputDetector. Kept brief by design.
 }
@@ -1543,7 +1581,7 @@ long as the player can never have two of them active at once.
 
 #### MotionInputDetector — Real-Time Trie Resolution
 
-Component on the player. Only evaluates when `advancedCombatActive = true`. A trie is built
+Component on the player. Only evaluates when `ChiModeActive = true`. A trie is built
 from the active loadout's `MotionInputTriggerSO`s and walked forward, incrementally, as zone
 changes arrive — there is nothing to scan at button-press time, only a current position to
 read.
@@ -1577,16 +1615,24 @@ history buffer, no per-pattern bookkeeping. On each zone change:
 2. If the new zone matches one of the current node's children:
      advance to that child
      if this was the first step away from root, set attemptStartTime = Time.time
-     if the new node's effectOnComplete is non-null:
-       effectOnComplete.Execute(caster)
-       reset to root
+     (reaching a node whose effectOnComplete is non-null does NOT fire it here — it just
+     leaves the walk sitting there, "armed"; only a matching button press fires it, below)
 3. Else (zone doesn't match any child from here):
      stay at the current node — not a reset
 ```
 
+*(Corrected from an earlier draft of this doc, which had step 2 firing `effectOnComplete`
+immediately on reaching a completion node via zone change alone — that contradicted this
+section's own button-gating and the very existence of `confirmButton`. A motion needs a
+confirm button, not just the directional shape, same as every real fighting game; firing and
+resetting to root only ever happens from a matching button press or from the timeout, never
+from the walk alone.)*
+
 **On button press:** check whether `effectOnComplete` at the current node is non-null and
 its `TriggerEffectSO`'s `confirmButton` matches this press. No match → the press falls
-through to `ComboSystem` as a normal attack. Players who haven't unlocked `ADVANCED_COMBAT`,
+through to `ComboSystem` as a normal attack — and either way, matched or not, Chi Mode itself
+ends if it was active (see "Chi Mode" above; `PlayerController.HandleAttackButton` is what
+actually sequences "ask the detector, then cancel"). Players who haven't unlocked `CHI_MODE`,
 aren't holding the button, or have nothing in their loadout that matches, experience zero
 difference from the base combat system.
 
@@ -3843,7 +3889,8 @@ room load and on `OnAbilityUnlocked` events. Opens with an animation and disable
 - `HIGH_KICK` (breaks cracked ceilings)
 - `IRON_BODY` (withstands environmental hazards)
 - `WIRE_FU` (grapple to ceiling anchor rings)
-- `ADVANCED_COMBAT` (unlocks advanced combat mode + motion input detection)
+- `CHI_MODE` (unlocks Chi Mode + motion input detection; `PlayerController.chiModeUnlocked` is a
+  manual stand-in for this check until `WorldStateManager` exists)
 - Additional motion input abilities defined via `TriggerEffectSO` — no code required per ability
 
 ---
@@ -4225,7 +4272,7 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 | 2 | `PlayerStateMachine.cs` | Gates all combat work | ✅ Done |
 | 3 | `HitboxController.cs` / `HurtboxController.cs` (+ `HurtboxZoneForwarder.cs`, `DamageCalculator.cs`) | Damage pipeline | ✅ Done — attacker-driven resolution, `Health.TakeDamage`/`OnEntityDamaged`, and hitbox reach authored via keyframed AnimationClip curves rather than a code reach-index; Head/Block/stagger/StatSheet still stubbed, see §3n |
 | 4 | `InputBuffer.cs` | Required before combo system | ✅ Done — `InputBuffer.cs` (`KungFuVania.Combat`), a capacity-16 timestamped ring buffer on the Player. `PlayerController` buffers a light/heavy attack press only when `TryEnterState` fails because the combat state machine is busy (not for any other rejection reason), then on return to `NONE` re-resolves the crouch/air/ground target state fresh against current locomotion — never a press-time snapshot — before retrying through `TryEnterState`, so a stale buffered attack fails closed instead of firing in a context it's no longer valid for. One flat `[SerializeField]` expiry window (0.4s, tuned to safely outlast the busiest current attack clip), measured from the press itself; no per-step `inputBufferWindow`/`inputExpireWindow` or cancellable-frame gating yet — that's `ComboSystem`/`ComboStep`'s job once combos exist |
-| 5 | `MotionInputDetector.cs` (+ skill loadout) | Moved up ahead of Stagger/Stat/Aura/Equipment — a matched pattern only needs to fire *something*, and can do that as a trimmed flat-damage attack today (same trim `DamageCalculator` already uses, see row 3) rather than waiting on the full `AbilityExecutionContext` chain. Facing-relative zone mirroring and the runtime resolution model are now fully designed — see §3l: a real-time trie walk over the player's active skill loadout, replacing the originally-drafted `MotionInputBuffer` ring buffer entirely (it's gone from the design, not just unbuilt). | Not started |
+| 5 | `MotionInputDetector.cs` (+ skill loadout) | Moved up ahead of Stagger/Stat/Aura/Equipment — a matched pattern only needs to fire *something*, and can do that as a trimmed flat-damage attack today (same trim `DamageCalculator` already uses, see row 3) rather than waiting on the full `AbilityExecutionContext` chain. Facing-relative zone mirroring and the runtime resolution model are now fully designed — see §3l: a real-time trie walk over the player's active skill loadout, replacing the originally-drafted `MotionInputBuffer` ring buffer entirely (it's gone from the design, not just unbuilt). | ✅ Done — `StickInputConfigSO` zone mapping (stick + d-pad, both feeding one `Move` action), `TriggerSO`/`EffectSO`/`TriggerEffectSO`/`MotionInputTriggerSO`/`AbilityEffectSO`, `SkillLoadout` (owned pool + capped active loadout, no persistence), and `MotionInputDetector`'s trie (button-gated firing, charge steps included) are all built. Chi Mode itself (locked walking, Shift/left-bumper keybind, attack-fires-and-cancels with a release/re-press latch) lives on `PlayerController`/`PlayerStateMachine` — see §3l "Chi Mode". Only a placeholder `DebugLogAbilityEffectSO` exists as an actual effect (proves the pipeline end-to-end, not a real ability); a real animated special and the Projectile System (row 6) remain not started. Compiles clean and Play Mode starts without exceptions — not yet feel-tested with a real controller/keyboard. |
 | 6 | `ProjectileController.cs` + `ProjectileManager.cs` | Carrier for any traveling special fired by Motion Input System (e.g. a fireball) — fully designed now, see §3l "Projectile System". Listed after Motion Input System here for build-order bookkeeping only — functionally it needs to land alongside or before it, since a matched motion has nothing to fire without it. | Not started |
 | 7 | `StaggerMeter.cs` | Required before combat tuning | Not started |
 | 8 | `StatSheet.cs` | Required before damage formula, health system, or chi pool | Not started |

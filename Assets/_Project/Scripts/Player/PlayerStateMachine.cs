@@ -34,6 +34,9 @@ namespace KungFuVania.Player
             ChangeState("IDLE");
         }
 
+        // Ticks normally during Chi Mode too — the stick still drives real walking then (see
+        // PlayerController.HandleMove), just without updating facing, so WALK/RUN/CROUCH need to
+        // keep responding to it exactly like they do outside Chi Mode.
         private void Update()
         {
             currentState?.Tick(Time.deltaTime);

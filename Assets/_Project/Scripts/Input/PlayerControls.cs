@@ -138,6 +138,15 @@ namespace KungFuVania.Input
                     ""processors"": """",
                     ""interactions"": """",
                     ""initialStateCheck"": false
+                },
+                {
+                    ""name"": ""ChiMode"",
+                    ""type"": ""Button"",
+                    ""id"": ""0d246bf8-27e9-4053-866f-bed8a52c0ad2"",
+                    ""expectedControlType"": """",
+                    ""processors"": """",
+                    ""interactions"": """",
+                    ""initialStateCheck"": false
                 }
             ],
             ""bindings"": [
@@ -264,6 +273,17 @@ namespace KungFuVania.Input
                 },
                 {
                     ""name"": """",
+                    ""id"": ""b4946408-729a-4b1a-a71b-2538ba390fa4"",
+                    ""path"": ""<Gamepad>/dpad"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Move"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": false
+                },
+                {
+                    ""name"": """",
                     ""id"": ""caecd7ff-becf-4d7e-8433-6149e678c65b"",
                     ""path"": ""<Keyboard>/space"",
                     ""interactions"": """",
@@ -349,6 +369,28 @@ namespace KungFuVania.Input
                     ""action"": ""Dodge"",
                     ""isComposite"": false,
                     ""isPartOfComposite"": false
+                },
+                {
+                    ""name"": """",
+                    ""id"": ""43e441a9-833f-4e7c-8cc9-3c30ed48ef9e"",
+                    ""path"": ""<Keyboard>/leftShift"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""ChiMode"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": false
+                },
+                {
+                    ""name"": """",
+                    ""id"": ""a4b4e02a-8bfa-4c01-900f-27311f936cda"",
+                    ""path"": ""<Gamepad>/leftShoulder"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""ChiMode"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": false
                 }
             ]
         }
@@ -362,6 +404,7 @@ namespace KungFuVania.Input
             m_Player_AttackLight = m_Player.FindAction("AttackLight", throwIfNotFound: true);
             m_Player_AttackHeavy = m_Player.FindAction("AttackHeavy", throwIfNotFound: true);
             m_Player_Dodge = m_Player.FindAction("Dodge", throwIfNotFound: true);
+            m_Player_ChiMode = m_Player.FindAction("ChiMode", throwIfNotFound: true);
         }
 
         ~@PlayerControls()
@@ -447,6 +490,7 @@ namespace KungFuVania.Input
         private readonly InputAction m_Player_AttackLight;
         private readonly InputAction m_Player_AttackHeavy;
         private readonly InputAction m_Player_Dodge;
+        private readonly InputAction m_Player_ChiMode;
         /// <summary>
         /// Provides access to input actions defined in input action map "Player".
         /// </summary>
@@ -478,6 +522,10 @@ namespace KungFuVania.Input
             /// Provides access to the underlying input action "Player/Dodge".
             /// </summary>
             public InputAction @Dodge => m_Wrapper.m_Player_Dodge;
+            /// <summary>
+            /// Provides access to the underlying input action "Player/ChiMode".
+            /// </summary>
+            public InputAction @ChiMode => m_Wrapper.m_Player_ChiMode;
             /// <summary>
             /// Provides access to the underlying input action map instance.
             /// </summary>
@@ -519,6 +567,9 @@ namespace KungFuVania.Input
                 @Dodge.started += instance.OnDodge;
                 @Dodge.performed += instance.OnDodge;
                 @Dodge.canceled += instance.OnDodge;
+                @ChiMode.started += instance.OnChiMode;
+                @ChiMode.performed += instance.OnChiMode;
+                @ChiMode.canceled += instance.OnChiMode;
             }
 
             /// <summary>
@@ -545,6 +596,9 @@ namespace KungFuVania.Input
                 @Dodge.started -= instance.OnDodge;
                 @Dodge.performed -= instance.OnDodge;
                 @Dodge.canceled -= instance.OnDodge;
+                @ChiMode.started -= instance.OnChiMode;
+                @ChiMode.performed -= instance.OnChiMode;
+                @ChiMode.canceled -= instance.OnChiMode;
             }
 
             /// <summary>
@@ -620,6 +674,13 @@ namespace KungFuVania.Input
             /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
             /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
             void OnDodge(InputAction.CallbackContext context);
+            /// <summary>
+            /// Method invoked when associated input action "ChiMode" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
+            /// </summary>
+            /// <seealso cref="UnityEngine.InputSystem.InputAction.started" />
+            /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
+            /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
+            void OnChiMode(InputAction.CallbackContext context);
         }
     }
 }

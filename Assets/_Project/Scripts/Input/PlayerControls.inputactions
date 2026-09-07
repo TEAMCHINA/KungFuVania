@@ -50,6 +50,15 @@
                     "processors": "",
                     "interactions": "",
                     "initialStateCheck": false
+                },
+                {
+                    "name": "ChiMode",
+                    "type": "Button",
+                    "id": "0d246bf8-27e9-4053-866f-bed8a52c0ad2",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
                 }
             ],
             "bindings": [
@@ -176,6 +185,17 @@
                 },
                 {
                     "name": "",
+                    "id": "b4946408-729a-4b1a-a71b-2538ba390fa4",
+                    "path": "<Gamepad>/dpad",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Move",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
                     "id": "caecd7ff-becf-4d7e-8433-6149e678c65b",
                     "path": "<Keyboard>/space",
                     "interactions": "",
@@ -259,6 +279,28 @@
                     "processors": "",
                     "groups": "",
                     "action": "Dodge",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "43e441a9-833f-4e7c-8cc9-3c30ed48ef9e",
+                    "path": "<Keyboard>/leftShift",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "ChiMode",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "a4b4e02a-8bfa-4c01-900f-27311f936cda",
+                    "path": "<Gamepad>/leftShoulder",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "ChiMode",
                     "isComposite": false,
                     "isPartOfComposite": false
                 }

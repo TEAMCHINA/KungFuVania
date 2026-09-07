@@ -12,6 +12,8 @@ namespace KungFuVania.Input
         public event Action OnAttackLight;
         public event Action OnAttackHeavy;
         public event Action OnDodge;
+        public event Action OnChiModePressed;
+        public event Action OnChiModeReleased;
 
         private PlayerControls controls;
 
@@ -27,6 +29,8 @@ namespace KungFuVania.Input
                 controls.Player.AttackLight.performed += ctx => OnAttackLight?.Invoke();
                 controls.Player.AttackHeavy.performed += ctx => OnAttackHeavy?.Invoke();
                 controls.Player.Dodge.performed += ctx => OnDodge?.Invoke();
+                controls.Player.ChiMode.performed += ctx => OnChiModePressed?.Invoke();
+                controls.Player.ChiMode.canceled += ctx => OnChiModeReleased?.Invoke();
             }
 
             controls.Player.Enable();

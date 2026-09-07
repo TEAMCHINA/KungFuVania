@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7c402f25921df5b4b8625d0d6378c499, type: 3}
+  m_Name: MotionInput_QCF_Test
+  m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.MotionInputTriggerSO
+  sequence:
+  - zones: 0200000003000000
+    minHoldDuration: 0
+  - zones: 0300000006000000
+    minHoldDuration: 0
+  - zones: 06000000
+    minHoldDuration: 0
+  confirmButton: LIGHT
+  sequenceWindow: 0.5

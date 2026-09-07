@@ -66,6 +66,14 @@ namespace KungFuVania.Player
             states["CROUCH_ATTACK_2"] = new AttackState(this, () => ResolveHitboxData(crouchKickData), "CROUCH_ATTACK_2");
             states["JUMP_ATTACK_2"] = new AttackState(this, () => ResolveHitboxData(jumpKickData), "JUMP_ATTACK_2", exitOnLanding: true);
             states["JUMP_ATTACK_1"] = new AttackState(this, () => ResolveHitboxData(jumpPunchData), "JUMP_ATTACK_1", exitOnLanding: true);
+            // Motion Input System special (GAME_PLAN.md 3l) — visual only for now, deliberately no
+            // hitbox: () => null is safe because AttackState.Exit() always Deactivate()s the
+            // hitbox collider on the way out, and nothing here ever calls Activate() (no
+            // animation events on THROW_FIREBALL.anim), so activeHitboxData being null never gets
+            // read against an enabled collider. Falls into the grounded-only bucket by default
+            // in TryEnterState below (not crouch, not aerial) — no dedicated classification
+            // needed. Projectile spawn/damage is a deliberately separate, later task.
+            states["THROW_FIREBALL"] = new AttackState(this, () => null, "THROW_FIREBALL");
             states["DASH_FORWARD"] = new DodgeState(this, dodgeTotalDuration, () => Controller.ForwardDashDistance, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask);
             states["DASH_BACK"] = new DodgeState(this, dodgeTotalDuration, () => Controller.BackDashDistance, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask, reverseDirection: true);
             states["DODGE_ROLL"] = new DodgeState(this, dodgeTotalDuration * dodgeRollDurationMultiplier, () => Controller.DodgeDistance, dodgeIFrameStart, dodgeIFrameEnd * dodgeRollDurationMultiplier, dodgeObstructionMask);
