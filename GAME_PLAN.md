@@ -756,8 +756,9 @@ hit actually connected.
 Attack with canCancelIntoSpecial = true swings:
   ├─ Hit connects (HurtboxController overlap confirmed)
   │   → hitConnected flag set for this ComboStep
-  │   → MotionInputDetector checks whether its trie is currently sitting on a valid,
-  │     button-matching motion pattern (see §3l — this is a trie walk, not a buffer scan)
+  │   → MotionInputDetector checks whether the shared zone history currently satisfies a
+  │     valid, button-matching motion pattern (see §3l — a cheap backward scan over a short
+  │     buffer, same query TryFireCompletedMotion itself runs, not a cursor to peek at)
   │     ├─ Pattern matched → special fires, cancels recovery
   │     └─ No match → attack plays out normally
   └─ Whiff (no hit confirmed)
@@ -766,8 +767,8 @@ Attack with canCancelIntoSpecial = true swings:
 
 Unlike an earlier draft of this section, there is no `LockFacingActive`/`ChiModeActive`
 precondition here at all anymore — `MotionInputDetector` evaluates unconditionally (§3l "Lock
-Facing"), so whatever the trie is currently sitting on at the moment of hit-confirm is checked
-as-is. In practice this means the cancel works for forward-biased specials (QCF, DP, ...)
+Facing"), so the shared zone history as of the moment of hit-confirm is checked as-is. In
+practice this means the cancel works for forward-biased specials (QCF, DP, ...)
 regardless of whether Lock Facing happens to be held; a cancel into a back-crossing special
 (HCB/HCF/360) would still need the player to be holding Lock Facing through the setup attack for
 that specific attempt to have stayed uncorrupted, same as it would need to outside a cancel.
@@ -1174,7 +1175,7 @@ composed in this design:
 | `AddHitModifierSO` | contributes to `aggregate.bonusHitCountFor[targetEffect]` |
 | `ShiftStatWeightModifierSO` | adjusts chi/strength/weapon weighting for a specific effect (e.g. make flying kick chi-scaled) |
 | `OverrideProjectileHitBehaviorModifierSO` | swaps `ProjectileHitBehaviorSO` for a projectile-spawning effect (§3l) — e.g. gloves that make a fireball pierce instead of despawning on first contact. Sibling fields for size/range overrides on the same modifier once `AbilityExecutionContext` actually carries projectile fields — noted as a gap, not built |
-| `OverrideEffectModifierSO` | swaps which `EffectSO` fires for a given trigger entirely — e.g. boots that turn a melee roundhouse into a thrown fireball. Checked at the point an effect would otherwise fire (§3l's trie completion, for motion-triggered abilities); no match falls through to the original effect unchanged |
+| `OverrideEffectModifierSO` | swaps which `EffectSO` fires for a given trigger entirely — e.g. boots that turn a melee roundhouse into a thrown fireball. Checked at the point an effect would otherwise fire (§3l's motion match, for motion-triggered abilities); no match falls through to the original effect unchanged |
 
 New qualitative behaviors still need a programmer to write a new subclass — inherent to inventing
 a mechanic that isn't just a number, not a process failure. It's a one-time cost per *kind* of
@@ -1465,8 +1466,8 @@ Nothing downstream of `PlayerController.MoveInput` can tell which one produced a
 nor needs to.
 
 The raw stick `Vector2` (analog or digital, whichever produced it) is converted to a single
-integer zone every frame before reaching the trie walker (see `MotionInputDetector` below).
-Three steps:
+integer zone every frame before reaching the ring-buffer matcher (see `MotionInputDetector`
+below). Three steps:
 
 **1. Dead zone check**
 If `stick.magnitude < zoneDeadzone` → zone 5 (neutral). Prevents drift registering as input.
@@ -1601,94 +1602,101 @@ lever — the only real requirement is no collision *within one loadout*, so dif
 unlockable specials are free to reuse a satisfying motion across the game's whole roster as
 long as the player can never have two of them active at once.
 
-#### MotionInputDetector — Real-Time Trie Resolution
+#### MotionInputDetector — Lookback Ring-Buffer Matching
 
-Component on the player. Evaluates unconditionally, every frame — see §3l "Lock Facing" for why
-this no longer depends on any held button. A trie is built
-from the active loadout's `MotionInputTriggerSO`s and walked forward, incrementally, as zone
-changes arrive — there is nothing to scan at button-press time, only a current position to
-read.
+**As-built.** Replaced a real-time trie (walked forward incrementally, one shared mutable
+cursor) after two real correctness bugs were found by hand-tracing overlapping-moveset
+scenarios — a synthetic Dragon Punch (`[6]→[2,3]→[3,6]`) sharing a loadout with the real QCF
+fireball. Full bug traces and the reasoning that ruled out a smarter multi-cursor trie as the
+fix live in SESSION_PLAN.md's as-built writeup; short version, a single cursor structurally
+cannot represent "the player might be completing either of two overlapping patterns right now,"
+which is exactly the situation any two specials sharing prefix zones produce.
 
-**Every runtime-needed value is baked into the node at build time — the walk never computes
-or looks anything up, only reads:**
+Component on the player, still evaluating unconditionally every frame — see "Lock Facing" above
+for why this doesn't depend on any held button.
 
-```csharp
-class TrieNode {
-    Dictionary<int, TrieNode> children;   // keyed by zone
-    EffectSO effectOnComplete;            // null unless this node terminates some ability's sequence
-    float    effectiveWindow;             // precomputed, not derived while walking — see below
-}
-```
+**The shape.** A ring buffer of `(zone, timestamp)` — same fixed-array-plus-write-index shape as
+the existing `InputBuffer.cs`, not the same class — pushed on every zone change, exactly where
+the old trie called `OnZoneChanged`. On a confirm-button press, every registered pattern whose
+`confirmButton` matches the press is checked **independently** against this one shared history:
+no pattern's check can see or disturb another's, so there's no cursor for one interpretation to
+steal from another (this is what fixes the DP/QCF bug above).
 
-**Build.** Rebuilt whenever the active loadout changes, or on load — cheap, since the
-loadout is small and changes rarely, never per-frame. Patterns sharing a prefix (the same
-first N steps) share the same trie nodes. Walking/creating a path per `MotionInputTriggerSO`'s
-sequence, the final node of that path gets `effectOnComplete` set directly to the paired
-`TriggerEffectSO.effect` — no side list, no lookup table, the association lives on the node
-itself. `effectiveWindow` on every node along the way is set to the *longest* `sequenceWindow`
-among every ability whose sequence passes through that node, so a shared prefix never
-short-changes a pattern with a longer configured window than a sibling sharing that prefix.
-
-**Walk.** State is just a current node pointer plus one timestamp (`attemptStartTime`) — no
-history buffer, no per-pattern bookkeeping. On each zone change:
+**The scan**, per pattern, walks backward from the most recent entry:
 
 ```
-1. If an attempt is in progress and Time.time - attemptStartTime > currentNode.effectiveWindow:
-     reset to root (attempt abandoned — too slow, start over)
-2. If the new zone matches one of the current node's children:
-     advance to that child
-     if this was the first step away from root, set attemptStartTime = Time.time
-     (reaching a node whose effectOnComplete is non-null does NOT fire it here — it just
-     leaves the walk sitting there, "armed"; only a matching button press fires it, below)
-3. Else (zone doesn't match any child from here):
-     stay at the current node — not a reset
+1. The MOST RECENT entry must satisfy the pattern's LAST step - no skipping allowed here. If it
+   doesn't, this pattern doesn't match, full stop. (This alone is what makes a completed-then-
+   abandoned motion stop matching the instant the player's zone changes to anything else - the
+   old trie's "stay put on mismatch" kept a finished motion armed until the whole-attempt
+   timeout even after the player wandered away; no separate invalidation rule was needed to fix
+   it, just this tail rule.)
+2. Continuing backward, each earlier step is free to skip any number of non-matching "interior
+   noise" entries while searching for its own required zone-group - unbounded, by design
+   (reproduces the old trie's forgiving tolerance; see "Fuzziness tunables," not built, below,
+   for the future noise cap this leaves room for without changing the scan's shape).
+3. Once every step has matched, the whole span (most recent entry's timestamp minus the
+   earliest matched step's timestamp) must fit inside the pattern's own sequenceWindow.
 ```
 
-*(Corrected from an earlier draft of this doc, which had step 2 firing `effectOnComplete`
-immediately on reaching a completion node via zone change alone — that contradicted this
-section's own button-gating and the very existence of `confirmButton`. A motion needs a
-confirm button, not just the directional shape, same as every real fighting game; firing and
-resetting to root only ever happens from a matching button press or from the timeout, never
-from the walk alone.)*
+A confirm button is still required, same as before — reaching a satisfying tail doesn't fire
+anything by itself, only `TryFireCompletedMotion` (called from a real button press) ever invokes
+the scan at all.
 
-**On button press:** check whether `effectOnComplete` at the current node is non-null and
-its `TriggerEffectSO`'s `confirmButton` matches this press. No match → the press falls
-through to `ComboSystem` as a normal attack (`PlayerController.HandleAttackButton`). Lock Facing
-plays no role in this check at all anymore — see "Lock Facing" above. Players who haven't
-unlocked `LOCK_FACING`, or have nothing in their loadout that matches, experience zero
-difference from the base combat system.
+**Charge steps** (`minHoldDuration > 0`) need their own live tracker (`ChargeHoldTracker`), since
+a held-and-unchanging direction never produces a discrete zone-change event for the scan to find.
+It accumulates hold time while the current zone is anywhere in the charge group — brief drift
+between the group's own zones doesn't reset progress, only leaving the group entirely does,
+matching the original design's tolerance — and the instant the threshold is first crossed, the
+adapter pushes a **synthetic** entry into the same ring buffer at that zone/timestamp. That entry
+is flagged (`IsChargeSatisfaction`), not just zone-matched, because a plain entry from the moment
+the player first pressed *into* the charge zone — long before the hold was actually satisfied —
+would otherwise also pass the group-membership test, silently bypassing the hold requirement
+whenever a pattern's `sequenceWindow` happens to be configured longer than its own charge
+duration (caught by hand-tracing during implementation, covered by
+`Charge_StepOnlyMatchableViaSyntheticSatisfactionEntry`). Only a charge step's own check requires
+that flag; every plain step treats a synthetic entry exactly like a real one. Because the
+synthetic entry's timestamp is the *satisfaction* instant, not the hold-*start* instant, the hold
+itself is still effectively exempt from the whole-attempt `sequenceWindow` clock — a charge can
+be held as long as the player likes, and only the release/flick portion afterward has to be
+brisk, same as the original design intended.
 
-**"Stay put, don't reset" on a mismatch reproduces the originally-intended skip-mode
-tolerance.** Walking `4→2→4→6` against `BBF` (`[4,1,7]→[4,1,7]→[6,3,9]`): zone 4 advances to
-step 1; zone 2 matches nothing at step 2, so the walker just stays there; zone 4 advances to
-step 2; zone 6 completes step 3. Same result as scanning with skip-mode tolerance, with
-nothing actually scanned — only the timeout can cancel an attempt.
+**Tie-breaking, decided during implementation (was explicitly open going in):** when more than
+one pattern matches the same press — most notably, a full HCF naturally also satisfies a
+QCF-registered pattern for free, since QCF's three zones sit right inside HCF's tail, no special
+case needed — the pattern whose match needed the **smallest lookback span** (most recent entry's
+timestamp minus its own earliest matched step's timestamp) wins. Chosen over a raw step-count
+comparison because step count alone doesn't disambiguate every real case: the DP/QCF bug repro
+above has both patterns at 3 steps, but turns out to be a genuine tie under independent scanning
+(DP really is embedded in that raw input as an honest subsequence, same as it was for the old
+trie) — QCF's own match only ever looks back across its own 3 clean entries, while DP's has to
+reach past one older, skipped entry to find its first step, a strictly larger span. Rewarding the
+smaller span picks QCF, which is the outcome the bug was actually about: the fireball attempt
+shouldn't lose to a DP shape that's only "there" by incidental subsequence embedding. On an exact
+span tie, whichever pattern was registered first keeps priority — deterministic, but not a
+meaningful design decision, just a documented tiebreaker of last resort.
 
-**A shared prefix needs no tie-breaking.** Nothing waits to see whether a deeper node is
-coming, so a shared node either fires (it's a completion node) or it doesn't (the walk
-continues) — there is never more than one live candidate to track. If two patterns in the
-same loadout share a prefix and one completes before the other, the shorter one just fires —
-matching how real fighting-game input parsers behave (a Dragon Punch motion can "steal" a
-longer special sharing its opening frames), not something requiring disambiguation. Where a
-shared node has multiple still-reachable patterns with different `sequenceWindow` values,
-the longest of those windows governs at that node — no pattern is short-changed by a
-stricter sibling sharing its prefix.
+One traced-but-deliberately-unfixed edge case: holding the completing zone unchanged and mashing
+the confirm button repeatedly will keep re-satisfying the tail rule against that same buffer
+entry, since nothing here ages a match out purely by real elapsed time once the tail still
+matches. In practice this is absorbed by `TryEnterAbilityState` already refusing re-entry while
+the previous cast's animation state is still active — same "fails silently, not worth a special
+case" precedent as a mistimed normal attack — and closing it properly is exactly the deferred
+"confirm window" fuzziness axis below, so it wasn't built early just to patch this one case.
 
-**Timeout is for the whole attempt, not per step, and stays brief.** `attemptStartTime` is
-set once, on the first successful step away from root, and never refreshed by later
-successful steps — the entire sequence must land inside one short window regardless of step
-count. A per-step reset would only bound individual gaps, letting a slow, deliberate player
-stretch a long sequence (`HCB`'s 5 steps, say) out arbitrarily; one brief whole-attempt
-window is what actually makes idly wandering the stick infeasible, not just discouraged.
-
-**Charge steps are exempt from the brief-window clock during the hold itself.** A charge
-requirement (`minHoldDuration`) can be held as long as the player likes — the clock for the
-*following* transition steps (the release/flick portion) only starts once the hold
-requirement is first satisfied, matching how charge motions actually feel in the genre: hold
-as long as you want, but the release has to be brisk. Charge accumulation needs no history
-either — an accumulated-hold-time counter plus a last-zone-entry timestamp, updated
-incrementally as zone changes arrive, tolerates brief drift between the charge group's zones
-the same way the originally-drafted buffer-summing approach did.
+**Testability.** All of the above (ring buffer, pattern/step shapes, charge tracker, the matcher
+itself) is plain C# with zero Unity dependency, living in its own `KungFuVania.MotionMatching`
+assembly (`Assets/_Project/Scripts/Combat/MotionMatching/`) — this project's first `.asmdef` —
+so it's covered by EditMode unit tests
+(`Assets/_Project/Tests/EditMode/MotionMatcherTests.cs`, `KungFuVania.Tests.EditMode.asmdef`)
+with no Play Mode involved. `MotionInputDetector` itself stays a plain MonoBehaviour in
+`Assembly-CSharp` and becomes the adapter: translates the active loadout's
+`MotionInputTriggerSO`s into the pure matcher's plain pattern shape once at `Start`, owns the
+real ring buffer and charge trackers, feeds them real `Time.time`/`Time.deltaTime` every frame,
+and calls into the pure matcher on a confirm-button press. See SESSION_PLAN.md's as-built
+writeup for why the assembly boundary had to be drawn exactly this way (a new asmdef can never
+reference a type still sitting in plain `Assembly-CSharp`, only the reverse) and for the actual
+test-run results.
 
 #### Projectile System
 
@@ -1864,6 +1872,20 @@ bullet-hell territory. A player manually inputting a motion-plus-button combo pe
 nowhere near that throughput. Funneling every spawn/despawn through `ProjectileManager` means
 swapping in `UnityEngine.Pool.ObjectPool<T>` later, if profiling ever actually asks for it,
 is a contained change inside that one component rather than a rewrite.
+
+**No cap on concurrent projectiles — not a required feature, maybe never, noted so the idea
+isn't lost.** Right now a player can throw as many fireballs as they can input motions for;
+nothing tracks how many are alive at once. If a limit is ever wanted: `ProjectileManager`
+doesn't hold a live collection today (plain `Instantiate`/`Destroy`, nothing to count against),
+so that's the first gap — it'd need a collection of active instances (per-prefab or per-caster,
+so a future second projectile type isn't forced to share the same cap), decremented when
+`Despawn()` actually runs. The cap value itself would fit on `ThrowFireballEffectSO` (it already
+owns all other fireball-specific config) rather than on `ProjectileManager`, and `Spawn` would
+become a `TrySpawn` that checks the count first. The open question is gameplay feel, not
+mechanics: deny the new cast outright on a full cap (matches the existing "fails silently if
+you're mid-something-else" convention elsewhere), or despawn the oldest active one to make room
+(classic on-screen-limit pattern) — undecided, and not worth deciding until this is actually
+wanted.
 
 #### Passive Unlocks
 

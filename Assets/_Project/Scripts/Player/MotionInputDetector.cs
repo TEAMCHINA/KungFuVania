@@ -2,190 +2,122 @@ using System.Collections.Generic;
 using UnityEngine;
 using KungFuVania.Combat;
 using KungFuVania.Input;
+using KungFuVania.MotionMatching;
 
 namespace KungFuVania.Player
 {
-    // Real-time trie resolution over the player's active skill loadout — see GAME_PLAN.md 3l.
+    // Real-time adapter over the pure lookback matcher in KungFuVania.MotionMatching — see
+    // GAME_PLAN.md 3l "MotionInputDetector" and "planned refactor: trie -> lookback ring buffer"
+    // for the full design/history. This class owns everything Unity-flavored (real Time.time,
+    // the active skill loadout, firing the matched TriggerEffectSO's effect); the actual "does
+    // this history satisfy this pattern" logic has zero dependency on this class and lives in the
+    // separate KungFuVania.MotionMatching assembly instead, so it can be unit-tested without Play
+    // Mode (Assets/_Project/Tests/EditMode/MotionMatcherTests.cs).
+    //
     // Evaluates unconditionally, every frame, regardless of PlayerController.LockFacingActive —
     // forward-biased motions (QCF, DP, ...) never press away from facing so they can never
     // trigger a flip that would corrupt them, and don't need Lock Facing held at all; only
     // back-crossing motions (HCB, HCF, 360s) are actually at risk of that, and for those it's on
     // the player to hold Lock Facing themselves — the detector doesn't know or enforce which
     // patterns "need" it, it's a natural consequence of whether a given attempt's own zones would
-    // trigger a facing flip, not something tracked here. Every runtime-needed value is baked onto
-    // the trie nodes at build time; the walk itself never computes or looks anything up beyond a
-    // dictionary read.
+    // trigger a facing flip, not something tracked here.
     [RequireComponent(typeof(PlayerController))]
     public class MotionInputDetector : MonoBehaviour
     {
         [SerializeField] private StickInputConfigSO stickConfig;
         [SerializeField] private SkillLoadout skillLoadout;
 
-        private class TrieNode
-        {
-            // Keyed by zone (1-9) — any zone in a step's group gets its own entry pointing at
-            // the same shared child, so satisfying a step via any zone in its group converges.
-            public readonly Dictionary<int, TrieNode> children = new();
-            public EffectSO effectOnComplete;
-            public MotionInputTriggerSO sourceTrigger;
-            public float effectiveWindow;
-            // Non-null if arriving at this node satisfies/starts a charge requirement.
-            public int[] chargeZones;
-            public float chargeMinHoldDuration;
-        }
-
         private PlayerController controller;
-        private TrieNode root;
-        private TrieNode currentNode;
+
+        // The shared history every registered pattern is independently checked against — no
+        // per-pattern cursor, which is what fixes the old trie's bug 1 (a shared cursor letting
+        // one pattern's walk "steal" another's inputs). See MotionMatcher for the actual scan.
+        private MotionZoneRingBuffer history;
+        private readonly List<MotionPattern> patterns = new();
+
+        // One tracker per charge step across the whole active loadout (no dedup across patterns
+        // that happen to share an identical charge requirement — not worth the bookkeeping for a
+        // feature no real asset exercises yet, see GAME_PLAN.md 3l).
+        private readonly List<ChargeHoldTracker> chargeTrackers = new();
 
         private int lastZone = -1;
-        private float attemptStartTime;
-
-        // Charge-hold tracking for whichever charge node we're currently sitting at (if any).
-        private int[] chargeZones;
-        private float chargeHoldDuration;
-        private float chargeMinHoldDuration;
-        private bool chargeSatisfied;
 
         private void Awake() => controller = GetComponent<PlayerController>();
 
-        private void Start() => BuildTrie();
+        private void Start() => BuildPatterns();
 
         // Rebuilt on the active loadout changing would normally hook in here too — no menu/
         // loadout-editing UI exists yet, so build-once on Start covers the current scope.
-        private void BuildTrie()
+        private void BuildPatterns()
         {
-            root = new TrieNode();
-            if (skillLoadout == null)
-            {
-                ResetToRoot();
-                return;
-            }
+            history = new MotionZoneRingBuffer();
+            patterns.Clear();
+            chargeTrackers.Clear();
+            lastZone = -1;
+
+            if (skillLoadout == null) return;
 
             foreach (var entry in skillLoadout.ActiveMotionInputs())
             {
                 var motionTrigger = (MotionInputTriggerSO)entry.trigger;
-                var node = root;
+                var steps = new MotionPatternStep[motionTrigger.sequence.Length];
 
-                foreach (var step in motionTrigger.sequence)
+                for (var i = 0; i < motionTrigger.sequence.Length; i++)
                 {
-                    TrieNode next = null;
-                    foreach (var zone in step.zones)
-                    {
-                        if (node.children.TryGetValue(zone, out var existing))
-                        {
-                            next = existing;
-                            break;
-                        }
-                    }
-                    next ??= new TrieNode();
+                    var step = motionTrigger.sequence[i];
+                    steps[i] = new MotionPatternStep(step.zones, step.minHoldDuration);
 
-                    foreach (var zone in step.zones) node.children[zone] = next;
-
-                    next.effectiveWindow = Mathf.Max(next.effectiveWindow, motionTrigger.sequenceWindow);
                     if (step.minHoldDuration > 0f)
-                    {
-                        next.chargeZones = step.zones;
-                        next.chargeMinHoldDuration = step.minHoldDuration;
-                    }
-
-                    node = next;
+                        chargeTrackers.Add(new ChargeHoldTracker(step.zones, step.minHoldDuration));
                 }
 
-                node.effectOnComplete = entry.effect;
-                node.sourceTrigger = motionTrigger;
+                // Tag = the originating TriggerEffectSO, so a winning match can fire it back —
+                // MotionMatching has no idea what a TriggerEffectSO is (see GAME_PLAN.md 3l
+                // "Testability"), it just round-trips this opaque handle.
+                patterns.Add(new MotionPattern(steps, motionTrigger.confirmButton, motionTrigger.sequenceWindow, entry));
             }
-
-            ResetToRoot();
-        }
-
-        private void ResetToRoot()
-        {
-            currentNode = root;
-            chargeZones = null;
-            chargeHoldDuration = 0f;
-            chargeSatisfied = false;
         }
 
         private void Update()
         {
             var zone = stickConfig != null ? stickConfig.ComputeZone(controller.MoveInput, controller.FacingRight) : 5;
 
-            TickChargeHold(zone);
+            TickChargeTrackers(zone);
 
             if (zone != lastZone)
             {
-                OnZoneChanged(zone);
+                history.Push(zone, Time.time);
                 lastZone = zone;
             }
         }
 
-        // Accumulates hold time whenever the current zone is still within the active charge
-        // group, tolerating brief drift between that group's own zones (GAME_PLAN.md 3l) — an
-        // off-group frame simply doesn't accumulate, it doesn't reset progress either. Marks the
-        // charge satisfied the instant the requirement is met and starts the clock for whatever
-        // transition step follows, rather than refreshing it on every later step.
-        private void TickChargeHold(int zone)
+        // Ticks every active charge requirement every frame (not just on zone change) — a held,
+        // unchanging direction never produces its own zone-change event, so without this a charge
+        // step's hold could never be observed at all. The instant any one of them first becomes
+        // satisfied, push a synthetic entry into the SAME shared history at the real current
+        // time, flagged so only a charge step can be satisfied by it (see
+        // MotionZoneEvent.IsChargeSatisfaction for why that flag is load-bearing).
+        private void TickChargeTrackers(int zone)
         {
-            if (chargeZones == null || chargeSatisfied) return;
-            if (System.Array.IndexOf(chargeZones, zone) < 0) return;
-
-            chargeHoldDuration += Time.deltaTime;
-            if (chargeHoldDuration >= chargeMinHoldDuration)
+            for (var i = 0; i < chargeTrackers.Count; i++)
             {
-                chargeSatisfied = true;
-                attemptStartTime = Time.time;
+                if (chargeTrackers[i].Tick(zone, Time.deltaTime))
+                    history.Push(zone, Time.time, isChargeSatisfaction: true);
             }
         }
 
-        private void OnZoneChanged(int zone)
-        {
-            // Charge steps are exempt from the timeout during the hold itself — see
-            // TickChargeHold. Once satisfied, the clock (reset there) governs normally again.
-            var chargingCurrentStep = chargeZones != null && !chargeSatisfied;
-            if (!chargingCurrentStep && currentNode != root && Time.time - attemptStartTime > currentNode.effectiveWindow)
-            {
-                ResetToRoot();
-            }
-
-            if (!currentNode.children.TryGetValue(zone, out var next))
-            {
-                // Mismatch: stay put, not a reset — reproduces skip-mode tolerance (GAME_PLAN.md 3l).
-                return;
-            }
-
-            var wasRoot = currentNode == root;
-            currentNode = next;
-            if (wasRoot) attemptStartTime = Time.time;
-
-            if (currentNode.chargeZones != null)
-            {
-                chargeZones = currentNode.chargeZones;
-                chargeMinHoldDuration = currentNode.chargeMinHoldDuration;
-                chargeHoldDuration = 0f;
-                chargeSatisfied = false;
-            }
-            else
-            {
-                chargeZones = null;
-            }
-
-            // Reaching a completion node here does NOT fire it — only a matching confirm-button
-            // press does (TryFireCompletedMotion below). The doc as originally written read as
-            // auto-firing here, which contradicted confirmButton's own existence; fixed in
-            // GAME_PLAN.md 3l alongside this implementation.
-        }
-
-        // Called from PlayerController's attack-button handling, using the state as of the press.
-        // True only if this exact button confirms whatever pattern the walk is currently sitting
-        // on; false falls through to a normal buffered attack.
+        // Called from PlayerController's attack-button handling, using history as of the press.
+        // Checks every registered pattern whose confirmButton matches this press independently
+        // against the same shared history (see MotionMatcher.TryFindBestMatch for the tie-break
+        // used when more than one matches at once) and fires the winner's effect, if any. False
+        // falls through to a normal buffered attack.
         public bool TryFireCompletedMotion(string attackAction)
         {
-            if (currentNode == null || currentNode.effectOnComplete == null) return false;
-            if (currentNode.sourceTrigger == null || currentNode.sourceTrigger.confirmButton != attackAction) return false;
+            if (history == null) return false;
+            if (!MotionMatcher.TryFindBestMatch(history, patterns, attackAction, out var winner)) return false;
 
-            currentNode.effectOnComplete.Execute(gameObject);
-            ResetToRoot();
+            var entry = (TriggerEffectSO)winner.Tag;
+            entry.effect.Execute(gameObject);
             return true;
         }
     }

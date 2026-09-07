@@ -237,7 +237,7 @@ namespace KungFuVania.Player
             // a motion-input direction by MotionInputDetector, exactly like real fighting games
             // (the same stick both walks you and inputs specials, always, no separate mode).
             // Facing only needs to stay fixed for motions that cross the back side, where a flip
-            // mid-sequence would invert the trie's "toward/away" zone mirroring underneath an
+            // mid-sequence would invert the matcher's "toward/away" zone mirroring underneath an
             // in-progress attempt — see LockFacingActive.
             if (!LockFacingActive && value.x != 0f) FacingRight = value.x > 0f;
 

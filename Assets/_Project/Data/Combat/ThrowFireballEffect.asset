@@ -16,4 +16,4 @@ MonoBehaviour:
   spawnFrameIndex: 2
   projectilePrefab: {fileID: 2864418796350958497, guid: 4aae6c9ee7d5e3a48b719dcc26acfc63, type: 3}
   projectileHitboxData: {fileID: 11400000, guid: 78e6d1a8d6171374e87a8116480d2201, type: 2}
-  spawnOffset: {x: 0.5, y: 0.5}
+  spawnOffset: {x: 0.5, y: 0.9}
