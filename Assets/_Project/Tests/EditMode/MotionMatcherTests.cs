@@ -87,16 +87,19 @@ namespace KungFuVania.Tests.EditMode
 
             // Under independent-per-pattern scanning this history is a genuine, honest subsequence
             // match for BOTH patterns (DP's shape really is embedded in the raw input, same as it
-            // was for the old trie) - this is actually a tie, resolved by span, not a case where
-            // DP fails to match at all. Confirm that explicitly before checking who wins it.
-            Assert.IsTrue(MotionMatcher.TryMatch(history, dp, out var dpSpan), "expected DP to also match - this scenario is a tie, not a non-match");
-            Assert.IsTrue(MotionMatcher.TryMatch(history, qcf, out var qcfSpan));
+            // was for the old trie) - this is actually a tie, resolved by skip count (not span -
+            // see MotionMatcher.TryFindBestMatch's doc comment for why span alone would get this
+            // one backwards), not a case where DP fails to match at all.
+            Assert.IsTrue(MotionMatcher.TryMatch(history, dp, out var dpSpan, out var dpSkips), "expected DP to also match - this scenario is a tie, not a non-match");
+            Assert.IsTrue(MotionMatcher.TryMatch(history, qcf, out var qcfSpan, out var qcfSkips));
             Assert.Less(qcfSpan, dpSpan, "QCF's match should need to look back less far than DP's");
+            Assert.AreEqual(0, qcfSkips, "QCF's three steps land on three consecutive entries - no skip needed");
+            Assert.AreEqual(1, dpSkips, "DP's first step only matches by skipping past QCF's own 'down' entry to reach the stale 'forward' from walking");
 
             var found = MotionMatcher.TryFindBestMatch(history, new[] { dp, qcf }, "LIGHT", out var winner);
 
             Assert.IsTrue(found);
-            Assert.AreEqual("QCF", winner.Tag, "QCF should win the tie - see MotionMatcher.TryFindBestMatch's tie-break doc comment");
+            Assert.AreEqual("QCF", winner.Tag, "QCF must win - fewer skips - or bug 1 (setup-input hijacking) is back");
         }
 
         // --- Bug 2: post-completion wandering --------------------------------------------------
@@ -112,7 +115,7 @@ namespace KungFuVania.Tests.EditMode
             history.Push(6, t); t += 0.1f; // QCF complete here
             history.Push(4, t);            // player wanders away afterward - new tail, unrelated zone
 
-            Assert.IsFalse(MotionMatcher.TryMatch(history, qcf, out _), "tail no longer satisfies QCF's last step after wandering away");
+            Assert.IsFalse(MotionMatcher.TryMatch(history, qcf, out _, out _), "tail no longer satisfies QCF's last step after wandering away");
         }
 
         [Test]
@@ -125,7 +128,7 @@ namespace KungFuVania.Tests.EditMode
             history.Push(3, t); t += 0.1f;
             history.Push(6, t); // QCF complete, tail = 6, nothing after it
 
-            Assert.IsTrue(MotionMatcher.TryMatch(history, qcf, out _));
+            Assert.IsTrue(MotionMatcher.TryMatch(history, qcf, out _, out _));
         }
 
         // --- Charge steps -----------------------------------------------------------------------
@@ -194,19 +197,19 @@ namespace KungFuVania.Tests.EditMode
             history.Push(4, 0f);    // plain entry: player just pressed back, hold not yet satisfied
             history.Push(6, 0.05f); // flicks forward almost immediately - too soon for a real charge
 
-            Assert.IsFalse(MotionMatcher.TryMatch(history, pattern, out _),
+            Assert.IsFalse(MotionMatcher.TryMatch(history, pattern, out _, out _),
                 "a plain (non-satisfaction) entry in the charge zone must not satisfy a charge step, however generous the window is");
 
             history.Push(4, 5f, isChargeSatisfaction: true); // the adapter's synthetic push once the hold actually completes
             history.Push(6, 5.1f);                            // NOW flicks forward
 
-            Assert.IsTrue(MotionMatcher.TryMatch(history, pattern, out _));
+            Assert.IsTrue(MotionMatcher.TryMatch(history, pattern, out _, out _));
         }
 
         // --- HCF also satisfies QCF, plus the tie-break -----------------------------------------
 
         [Test]
-        public void FullHcf_AlsoSatisfiesQcf_AndQcfWinsTheTieBreak()
+        public void FullHcf_AlsoSatisfiesQcf_AndHcfWinsTheTieBreak()
         {
             var hcf = HcfPattern(tag: "HCF");
             var qcf = QcfPattern(sequenceWindow: 1f, tag: "QCF");
@@ -220,14 +223,19 @@ namespace KungFuVania.Tests.EditMode
 
             // Both independently match the same full-HCF history - QCF's zones sit inside HCF's
             // tail, so this "falls out" of the backward scan rather than needing a special case.
-            Assert.IsTrue(MotionMatcher.TryMatch(history, hcf, out var hcfSpan));
-            Assert.IsTrue(MotionMatcher.TryMatch(history, qcf, out var qcfSpan));
+            // Unlike the bug-1 repro, this history is completely clean for BOTH patterns - every
+            // step of both HCF and QCF lands on a consecutive entry, zero skips either side - so
+            // this is a genuine skip-count tie, and it's span that decides it.
+            Assert.IsTrue(MotionMatcher.TryMatch(history, hcf, out var hcfSpan, out var hcfSkips));
+            Assert.IsTrue(MotionMatcher.TryMatch(history, qcf, out var qcfSpan, out var qcfSkips));
             Assert.Less(qcfSpan, hcfSpan);
+            Assert.AreEqual(0, hcfSkips);
+            Assert.AreEqual(0, qcfSkips, "skip-count tie is the whole point of this scenario - see FullHcf vs Bug1's DP repro");
 
             var found = MotionMatcher.TryFindBestMatch(history, new[] { hcf, qcf }, "LIGHT", out var winner);
 
             Assert.IsTrue(found);
-            Assert.AreEqual("QCF", winner.Tag);
+            Assert.AreEqual("HCF", winner.Tag, "equal skips (zero both sides) falls to span - HCF is the longer, more committed motion and should win it");
         }
 
         // --- sequenceWindow ----------------------------------------------------------------------
@@ -241,7 +249,7 @@ namespace KungFuVania.Tests.EditMode
             history.Push(3, 0.1f);
             history.Push(6, 0.7f); // whole span 0.7s > 0.5s window
 
-            Assert.IsFalse(MotionMatcher.TryMatch(history, qcf, out _));
+            Assert.IsFalse(MotionMatcher.TryMatch(history, qcf, out _, out _));
         }
 
         [Test]
@@ -253,7 +261,7 @@ namespace KungFuVania.Tests.EditMode
             history.Push(3, 0.1f);
             history.Push(6, 0.4f); // whole span 0.4s <= 0.5s window
 
-            Assert.IsTrue(MotionMatcher.TryMatch(history, qcf, out _));
+            Assert.IsTrue(MotionMatcher.TryMatch(history, qcf, out _, out _));
         }
 
         // --- Interior noise tolerance --------------------------------------------------------
@@ -269,7 +277,7 @@ namespace KungFuVania.Tests.EditMode
             history.Push(9, 0.25f); // more noise
             history.Push(6, 0.3f);  // step2 (tail)
 
-            Assert.IsTrue(MotionMatcher.TryMatch(history, qcf, out _));
+            Assert.IsTrue(MotionMatcher.TryMatch(history, qcf, out _, out _));
         }
     }
 }

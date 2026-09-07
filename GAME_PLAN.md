@@ -1661,20 +1661,33 @@ itself is still effectively exempt from the whole-attempt `sequenceWindow` clock
 be held as long as the player likes, and only the release/flick portion afterward has to be
 brisk, same as the original design intended.
 
-**Tie-breaking, decided during implementation (was explicitly open going in):** when more than
-one pattern matches the same press — most notably, a full HCF naturally also satisfies a
+**Tie-breaking, decided during implementation then corrected once by design review:** when more
+than one pattern matches the same press — most notably, a full HCF naturally also satisfies a
 QCF-registered pattern for free, since QCF's three zones sit right inside HCF's tail, no special
-case needed — the pattern whose match needed the **smallest lookback span** (most recent entry's
-timestamp minus its own earliest matched step's timestamp) wins. Chosen over a raw step-count
-comparison because step count alone doesn't disambiguate every real case: the DP/QCF bug repro
-above has both patterns at 3 steps, but turns out to be a genuine tie under independent scanning
-(DP really is embedded in that raw input as an honest subsequence, same as it was for the old
-trie) — QCF's own match only ever looks back across its own 3 clean entries, while DP's has to
-reach past one older, skipped entry to find its first step, a strictly larger span. Rewarding the
-smaller span picks QCF, which is the outcome the bug was actually about: the fireball attempt
-shouldn't lose to a DP shape that's only "there" by incidental subsequence embedding. On an exact
-span tie, whichever pattern was registered first keeps priority — deterministic, but not a
-meaningful design decision, just a documented tiebreaker of last resort.
+case needed — the pattern with the **fewest skipped interior entries** wins first; only on a
+skip-count tie does the **largest lookback span** win. First pass landed on smallest-span-wins
+alone (reasoning: the DP/QCF bug repro is a genuine tie under independent scanning, and QCF's
+match is a strictly smaller span there, so smallest-span picked the right winner for that one
+case). That was wrong in general, caught immediately when asked "shouldn't the longer, more
+committed motion win — if both HCF and QCF match, HCF should win?": smallest-span-wins gets the
+real HCF-vs-QCF case backwards on its own terms, since a genuinely longer deliberate motion
+naturally has a larger span than the shorter one embedded in it.
+
+Flipping to largest-span-wins outright would have fixed that but silently reintroduced the
+original bug: DP's match in the bug repro is also *larger* than QCF's, for a completely different
+reason — it can only reach its own first step by skipping past QCF's own "down" entry to find an
+older, incidental "forward" left over from walking, and that skip is exactly what stretches its
+span past QCF's. Span alone can't tell "genuinely longer deliberate motion" apart from
+"coincidental subsequence collision stretched by a skip" — both look the same to a bare number.
+Skip count is what actually distinguishes them, so it has to be checked *first*: a full HCF and
+the QCF inside its tail both match with **zero** skips on either side (a real tie), which is what
+correctly lets span decide and hands it to HCF; the DP repro is **not** a skip-count tie (QCF: 0,
+DP: 1), so QCF wins there regardless of span, same as before. On an exact tie in both, whichever
+pattern was registered first keeps priority — deterministic, but not a meaningful design
+decision, just a documented tiebreaker of last resort. Both cases are asserted directly in
+`MotionMatcherTests` (`Bug1_SetupWalkDoesNotHijackSubsequentFireball` now asserts the skip counts
+explicitly, not just span; `FullHcf_AlsoSatisfiesQcf_AndHcfWinsTheTieBreak` asserts the zero-skip
+tie and that HCF wins it).
 
 One traced-but-deliberately-unfixed edge case: holding the completing zone unchanged and mashing
 the confirm button repeatedly will keep re-satisfying the tail rule against that same buffer

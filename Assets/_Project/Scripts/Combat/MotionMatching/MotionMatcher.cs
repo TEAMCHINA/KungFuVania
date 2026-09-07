@@ -23,12 +23,15 @@ namespace KungFuVania.MotionMatching
         //
         // On success, 'lookbackSpan' is (most recent entry's timestamp) - (the earliest step's
         // matched-entry timestamp) — i.e. how much real time the whole matched sequence actually
-        // spanned. Callers use this for two things: checking it against the pattern's own
-        // sequenceWindow (below), and tie-breaking between multiple patterns that match the same
-        // history (see TryFindBestMatch).
-        public static bool TryMatch(MotionZoneRingBuffer history, MotionPattern pattern, out float lookbackSpan)
+        // spanned. 'skippedEntryCount' is how many interior entries had to be passed over
+        // (across every step) to complete the match. Callers use lookbackSpan to check against
+        // the pattern's own sequenceWindow (below); both feed tie-breaking between multiple
+        // patterns that match the same history (see TryFindBestMatch) — skip count first, span
+        // only as the tiebreaker, not the other way around (see that method's doc comment for why).
+        public static bool TryMatch(MotionZoneRingBuffer history, MotionPattern pattern, out float lookbackSpan, out int skippedEntryCount)
         {
             lookbackSpan = 0f;
+            skippedEntryCount = 0;
             if (history == null || pattern?.Steps == null || pattern.Steps.Length == 0) return false;
             if (history.Count == 0) return false;
 
@@ -60,6 +63,8 @@ namespace KungFuVania.MotionMatching
                         // allowed to skip past it looking for an older one — this is bug 2's fix.
                         return false;
                     }
+
+                    skippedEntryCount++;
                 }
 
                 if (!matched) return false; // ran out of history before this step was satisfied
@@ -75,34 +80,48 @@ namespace KungFuVania.MotionMatching
         //
         // Tie-break, for when more than one pattern matches the same press (e.g. a full HCF
         // naturally also satisfying a QCF registered in the same loadout, since QCF's zones sit
-        // inside HCF's tail — see GAME_PLAN.md 3l): smallest 'lookbackSpan' wins, i.e. whichever
-        // match needed to look back the least distance in time/interior-noise to complete. This
-        // was an explicitly open decision in the plan ("leaning toward rewarding the shorter/more
-        // specific pattern over the longer/more-committed one"); span was chosen over a raw
-        // step-count comparison because step count alone doesn't actually disambiguate every real
-        // case — notably the original bug-1 repro (a synthetic DP shaped [6]->[2,3]->[3,6] sharing
-        // a loadout with QCF) has BOTH patterns at 3 steps, but QCF's own match only ever looks
-        // back across its own 3 clean entries while DP's match has to reach past one older, skipped
-        // entry to find its own first step — a strictly larger span. Rewarding the smaller span
-        // picks QCF there, which is the behavior bug 1 was actually about: the fireball attempt
-        // shouldn't lose to a DP shape that's only "there" by incidental subsequence embedding. On
-        // an exact span tie, whichever pattern appears earlier in 'patterns' wins — deterministic,
-        // but not a meaningful design decision, just a documented tiebreaker of last resort.
+        // inside HCF's tail — see GAME_PLAN.md 3l): fewest skipped interior entries wins first;
+        // only on a skip-count tie does the largest 'lookbackSpan' win. Two illustrative cases,
+        // not one, and the order of these two criteria isn't interchangeable:
+        //   - A full, clean HCF and the QCF sitting inside its tail both match with ZERO skips —
+        //     a genuine tie on skip count — so it falls through to span, and HCF's is larger
+        //     simply because it's a longer, fully deliberate motion. HCF wins: a player who
+        //     performs the more committed motion shouldn't lose it to the simpler one embedded
+        //     inside it.
+        //   - The original bug-1 repro (a synthetic DP shaped [6]->[2,3]->[3,6] sharing a loadout
+        //     with QCF, triggered by walking forward as setup and then throwing a real QCF) is
+        //     NOT that case: QCF's match needs zero skips, but DP's can only reach its own first
+        //     step by skipping past QCF's own "down" entry to find an older, incidental "forward"
+        //     left over from walking — one skip where QCF needs none. If span alone decided ties
+        //     (largest wins, no skip check first), DP would win here too, since a skip-stretched
+        //     match also happens to span more real time — silently reintroducing bug 1. Skip
+        //     count has to be checked FIRST specifically because it's what tells "genuinely
+        //     longer deliberate motion" apart from "coincidental subsequence collision stretched
+        //     by a skip" — span alone cannot make that distinction.
+        // On an exact tie in both, whichever pattern appears earlier in 'patterns' wins —
+        // deterministic, but not a meaningful design decision, just a documented tiebreaker of
+        // last resort.
         public static bool TryFindBestMatch(MotionZoneRingBuffer history, IReadOnlyList<MotionPattern> patterns, string pressedButton, out MotionPattern winner)
         {
             winner = null;
             var haveWinner = false;
-            var bestSpan = float.PositiveInfinity;
+            var bestSkips = int.MaxValue;
+            var bestSpan = 0f;
 
             for (var i = 0; i < patterns.Count; i++)
             {
                 var pattern = patterns[i];
                 if (pattern == null || pattern.ConfirmButton != pressedButton) continue;
-                if (!TryMatch(history, pattern, out var span)) continue;
+                if (!TryMatch(history, pattern, out var span, out var skips)) continue;
 
-                if (!haveWinner || span < bestSpan)
+                var better = !haveWinner
+                    || skips < bestSkips
+                    || (skips == bestSkips && span > bestSpan);
+
+                if (better)
                 {
                     haveWinner = true;
+                    bestSkips = skips;
                     bestSpan = span;
                     winner = pattern;
                 }

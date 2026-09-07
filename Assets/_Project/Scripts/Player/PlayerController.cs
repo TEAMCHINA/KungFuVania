@@ -19,7 +19,7 @@ namespace KungFuVania.Player
         // Extra mid-air jumps beyond the initial ground jump. 0 = single jump (default, unchanged
         // feel). Bump this in the Inspector to test double/triple jump; will later be driven by
         // gear/skills (see GAME_PLAN.md 3k DoubleJumpAbility) instead of a flat manual value.
-        [SerializeField] private int jumpCharges = 0;
+        [SerializeField] private int jumpCharges = 2;
         [SerializeField] private float doubleTapWindow = 0.25f;
         [SerializeField] private float groundCheckRadius = 0.1f;
         [SerializeField] private Transform wallCheck;
@@ -29,7 +29,7 @@ namespace KungFuVania.Player
         // is required to recharge. 0 = ability not yet acquired (default, unchanged feel).
         // Bump this in the Inspector to test wall jump; will later be driven by gear/skills,
         // same manual-testing pattern as jumpCharges.
-        [SerializeField] private int maxWallJumps = 0;
+        [SerializeField] private int maxWallJumps = 1;
         [SerializeField] private Vector2 wallJumpVelocity = new Vector2(8f, 12f);
         // Brief lockout after a wall jump during which held input doesn't override the outward
         // launch velocity — without it, still holding "into" the wall (as wall-sliding requires)
