@@ -6,9 +6,15 @@ using KungFuVania.Input;
 namespace KungFuVania.Player
 {
     // Real-time trie resolution over the player's active skill loadout — see GAME_PLAN.md 3l.
-    // Only evaluates while PlayerController.ChiModeActive is true. Every runtime-needed value is
-    // baked onto the trie nodes at build time; the walk itself never computes or looks anything
-    // up beyond a dictionary read.
+    // Evaluates unconditionally, every frame, regardless of PlayerController.LockFacingActive —
+    // forward-biased motions (QCF, DP, ...) never press away from facing so they can never
+    // trigger a flip that would corrupt them, and don't need Lock Facing held at all; only
+    // back-crossing motions (HCB, HCF, 360s) are actually at risk of that, and for those it's on
+    // the player to hold Lock Facing themselves — the detector doesn't know or enforce which
+    // patterns "need" it, it's a natural consequence of whether a given attempt's own zones would
+    // trigger a facing flip, not something tracked here. Every runtime-needed value is baked onto
+    // the trie nodes at build time; the walk itself never computes or looks anything up beyond a
+    // dictionary read.
     [RequireComponent(typeof(PlayerController))]
     public class MotionInputDetector : MonoBehaviour
     {
@@ -32,7 +38,6 @@ namespace KungFuVania.Player
         private TrieNode root;
         private TrieNode currentNode;
 
-        private bool wasChiModeActive;
         private int lastZone = -1;
         private float attemptStartTime;
 
@@ -104,23 +109,6 @@ namespace KungFuVania.Player
 
         private void Update()
         {
-            var active = controller.ChiModeActive;
-
-            if (!active)
-            {
-                if (wasChiModeActive) ResetToRoot();
-                wasChiModeActive = false;
-                lastZone = -1;
-                return;
-            }
-
-            if (!wasChiModeActive)
-            {
-                ResetToRoot();
-                lastZone = -1; // force this session's first real zone to register as a change
-            }
-            wasChiModeActive = true;
-
             var zone = stickConfig != null ? stickConfig.ComputeZone(controller.MoveInput, controller.FacingRight) : 5;
 
             TickChargeHold(zone);
@@ -193,7 +181,6 @@ namespace KungFuVania.Player
         // on; false falls through to a normal buffered attack.
         public bool TryFireCompletedMotion(string attackAction)
         {
-            if (!controller.ChiModeActive) return false;
             if (currentNode == null || currentNode.effectOnComplete == null) return false;
             if (currentNode.sourceTrigger == null || currentNode.sourceTrigger.confirmButton != attackAction) return false;
 

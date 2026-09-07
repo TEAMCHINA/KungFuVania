@@ -66,14 +66,6 @@ namespace KungFuVania.Player
             states["CROUCH_ATTACK_2"] = new AttackState(this, () => ResolveHitboxData(crouchKickData), "CROUCH_ATTACK_2");
             states["JUMP_ATTACK_2"] = new AttackState(this, () => ResolveHitboxData(jumpKickData), "JUMP_ATTACK_2", exitOnLanding: true);
             states["JUMP_ATTACK_1"] = new AttackState(this, () => ResolveHitboxData(jumpPunchData), "JUMP_ATTACK_1", exitOnLanding: true);
-            // Motion Input System special (GAME_PLAN.md 3l) — visual only for now, deliberately no
-            // hitbox: () => null is safe because AttackState.Exit() always Deactivate()s the
-            // hitbox collider on the way out, and nothing here ever calls Activate() (no
-            // animation events on THROW_FIREBALL.anim), so activeHitboxData being null never gets
-            // read against an enabled collider. Falls into the grounded-only bucket by default
-            // in TryEnterState below (not crouch, not aerial) — no dedicated classification
-            // needed. Projectile spawn/damage is a deliberately separate, later task.
-            states["THROW_FIREBALL"] = new AttackState(this, () => null, "THROW_FIREBALL");
             states["DASH_FORWARD"] = new DodgeState(this, dodgeTotalDuration, () => Controller.ForwardDashDistance, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask);
             states["DASH_BACK"] = new DodgeState(this, dodgeTotalDuration, () => Controller.BackDashDistance, dodgeIFrameStart, dodgeIFrameEnd, dodgeObstructionMask, reverseDirection: true);
             states["DODGE_ROLL"] = new DodgeState(this, dodgeTotalDuration * dodgeRollDurationMultiplier, () => Controller.DodgeDistance, dodgeIFrameStart, dodgeIFrameEnd * dodgeRollDurationMultiplier, dodgeObstructionMask);
@@ -137,6 +129,29 @@ namespace KungFuVania.Player
             if (!allowed) return false;
 
             ChangeState(stateId);
+            return true;
+        }
+
+        // Lets an AbilityEffectSO (e.g. ThrowFireballEffectSO) supply its own fully-configured
+        // ICombatState at fire time, instead of PlayerCombatStateMachine needing dedicated fields
+        // and a states-dictionary entry for every ability that could ever exist — the whole point
+        // being that adding a second projectile-style special shouldn't touch this class at all,
+        // only add a second effect SO with its own data. Same eligibility gating as TryEnterState
+        // (grounded-only for now, matching every non-crouch/non-aerial attack's default bucket —
+        // no ability-animation state has needed anything else yet), just skips the states
+        // dictionary lookup since there's nothing to pre-register for a dynamically-parameterized
+        // state.
+        public bool TryEnterAbilityState(string stateId, ICombatState state)
+        {
+            if (currentStateId != "NONE") return false;
+            if (!IsGroundedLocomotion(locomotion.CurrentStateId)) return false;
+
+            currentState?.Exit();
+            currentStateId = stateId;
+            currentState = state;
+            currentState.Enter();
+
+            EventBus.Publish(new CombatStateChanged { StateId = stateId });
             return true;
         }
 

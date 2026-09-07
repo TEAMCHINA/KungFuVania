@@ -698,8 +698,10 @@ AnimationClip animationOverride      // combo-specific animation variant
 bool isDefensiveCancellable          // default true — parry/block press immediately interrupts
 bool isComboBufferCancellable        // default true — buffered combo input fires at cancellable frame
 bool canCancelIntoSpecial            // default false — attack can 2-in-1 cancel into a motion input
-                                     // special ON HIT only; requires ChiModeActive naturally
-                                     // since specials already gate on it
+                                     // special ON HIT only; no longer requires Lock Facing to be
+                                     // held (see §3l "Lock Facing") — detection runs
+                                     // unconditionally now, so this just works for any
+                                     // forward-biased special without further gating
 
 // Armor
 bool superArmor                      // default false — taking damage does not interrupt this attack
@@ -756,16 +758,19 @@ Attack with canCancelIntoSpecial = true swings:
   │   → hitConnected flag set for this ComboStep
   │   → MotionInputDetector checks whether its trie is currently sitting on a valid,
   │     button-matching motion pattern (see §3l — this is a trie walk, not a buffer scan)
-  │     ├─ Pattern matched + ChiModeActive = true → special fires, cancels recovery
+  │     ├─ Pattern matched → special fires, cancels recovery
   │     └─ No match → attack plays out normally
   └─ Whiff (no hit confirmed)
       → canCancelIntoSpecial is ignored; attack plays to end
 ```
 
-The `ChiModeActive` requirement is **not an additional gate** — it is already enforced
-naturally, since only motion input specials are valid cancel targets, and those already
-require `ChiModeActive` to detect. Players without `CHI_MODE` unlocked simply cannot perform
-the cancel, with no extra logic needed.
+Unlike an earlier draft of this section, there is no `LockFacingActive`/`ChiModeActive`
+precondition here at all anymore — `MotionInputDetector` evaluates unconditionally (§3l "Lock
+Facing"), so whatever the trie is currently sitting on at the moment of hit-confirm is checked
+as-is. In practice this means the cancel works for forward-biased specials (QCF, DP, ...)
+regardless of whether Lock Facing happens to be held; a cancel into a back-crossing special
+(HCB/HCF/360) would still need the player to be holding Lock Facing through the setup attack for
+that specific attempt to have stayed uncorrupted, same as it would need to outside a cancel.
 
 **Design intent:**
 - Whiff punishing is preserved — specials cannot be thrown out safely without landing
@@ -1392,48 +1397,65 @@ A traveling special (e.g. a fireball) additionally needs a projectile carrier �
 attacker, keyframed on that attacker's own clip; nothing about that model covers a detached,
 independently-moving collider.
 
-#### Chi Mode
+#### Lock Facing
 
-(Sketched earlier in this doc as "Advanced Combat Mode" — renamed to "Chi Mode" once actually
-built; every reference below and in code uses the new name.)
+(Sketched earlier in this doc as "Advanced Combat Mode," then built and named "Chi Mode," then
+narrowed down to this — every reference below and in code uses the current name. History kept
+here on purpose: "Chi Mode" may return later as a bigger, separate "super mode" mechanic, reusing
+the name and some of the infrastructure built for it, but decoupled from motion detection.)
 
 Holding the assigned button — `<Keyboard>/leftShift` or `<Gamepad>/leftShoulder` — sets one
 flag on `PlayerController`:
 
 ```csharp
-bool ChiModeActive => chiModeUnlocked && chiModeHeld && !chiModeSuppressedUntilRelease;
-// in movement update: if (!ChiModeActive) { UpdateFacing(moveInput); }
+bool LockFacingActive => lockFacingUnlocked && lockFacingHeld;
+// in movement update: if (!LockFacingActive) { UpdateFacing(moveInput); }
 ```
 
-While active:
-- **Facing direction is locked** — the character won't turn around during stick rotations,
-  and this is load-bearing, not cosmetic: `MotionInputDetector`'s zone mirroring is
-  facing-relative (§3l "Analog Stick → Zone Mapping"), so if facing flipped mid-sequence the
-  "toward/away" meaning of every zone would invert underneath an in-progress motion.
-- **Walking is not locked** — an earlier version of this design zeroed horizontal velocity and
-  froze the locomotion FSM entirely, on the theory that the stick needed to be a dedicated
-  motion-input device. Reverted: the same stick input drives both real movement and motion
-  detection simultaneously, exactly like it does in actual fighting games — walking backward
-  (pressing away from a locked facing) works the same as it does outside Chi Mode. Only facing
-  itself is suppressed (see `PlayerController.HandleMove`); `PlayerStateMachine` ticks normally.
-- `MotionInputDetector` walks its trie against the (facing-locked, still fully live) stick/d-pad
-  zone (see below)
-- **Pressing a confirm button (light or heavy attack) always ends Chi Mode**, whether or not
-  it also fired a special — see "On button press" below. Ending it this way is sticky even if
-  the Chi Mode button is still physically held down: it stays off until the player releases
-  that button and presses it again (`chiModeSuppressedUntilRelease`), not merely "as long as
-  it's held." An ordinary release (no attack button involved) ends Chi Mode the plain way and
-  clears that same latch, so the very next press re-engages cleanly.
-- **Block is the one planned exception to all of the above** — once Block exists, holding it
-  should be the only input that does *not* cancel Chi Mode the way every other action does.
-  Not implemented: Block itself doesn't exist anywhere in this codebase yet. Flagged here so
-  whoever builds Block carves out this interaction rather than letting it fall through to the
-  generic cancel path.
+That's the entire mechanic now: **holding it suppresses the facing flip, nothing else.**
+Movement was never locked to begin with (an earlier draft tried that, on the theory the stick
+needed to be a dedicated motion-input device, and reverted it — the same stick always drives
+both real movement and motion detection simultaneously, exactly like actual fighting games).
+What changed since is narrower but more significant: **motion-input detection no longer depends
+on this being held at all.**
 
-The `CHI_MODE` ability must be unlocked before the button does anything. Pressing it before
+**Why detection doesn't need to be gated.** A motion can only have its zone-mirroring corrupted
+by a facing flip if it actually visits a zone that would trigger one — i.e. a zone "away" from
+current facing. Facing only flips when the player presses away from it (`HandleMove`), so a
+pattern whose steps never include an away-zone can *never* trigger a flip regardless of whether
+anything is held: `QCF` ([2,3]→[3,6]→[6]) and `DP` ([6]→[2,3]→[3,6]) both live entirely on the
+neutral/forward side, so they're facing-flip-safe by their own geometry. Only patterns that cross
+the back side — `HCB`, `HCF`, 360s — are actually at risk, because completing them requires
+pressing away from facing at some point, and an unlocked flip mid-attempt would invert the
+"toward/away" meaning of every zone after it. So: `MotionInputDetector` evaluates unconditionally,
+every frame, for every pattern in the active loadout, whether Lock Facing is held or not (see
+"MotionInputDetector" below). A player attempting a back-crossing motion without holding it
+doesn't get blocked by the system — their own facing simply flips mid-attempt and corrupts that
+specific attempt, the same way turning around would corrupt anything else. **No per-pattern
+metadata is needed to know which motions "need" the lock** — it's an emergent property of a
+pattern's own zone list, not something tracked or enforced anywhere.
+
+This also retroactively resolves a real conflict that existed under the old "Chi Mode" framing:
+that design (§3e `canCancelIntoSpecial`) needs a completed motion to still be gate-checkable at
+the moment a setup attack's hit connects, but "any attack button press ends Chi Mode" (which
+existed then) would have turned Chi Mode off the instant the setup attack's own button was
+pressed — before the hit-confirm check could ever run. Under the current design, forward-biased
+specials (which is what almost every practical 2-in-1 cancel is going to be — canceling into a
+half-circle or 360 mid-combo is a much rarer ask) don't depend on Lock Facing at all, so there's
+nothing for an attack press to conflict with. **The old cancel-on-attack/release-latch mechanic
+is gone entirely, not just renamed** — a plain "hold to lock facing" utility has no reason to be
+forced off by pressing attack; it just reflects whatever the physical button is doing, for as
+long as it's held.
+
+The `LOCK_FACING` ability must be unlocked before the button does anything. Pressing it before
 unlock has no effect — the flag simply never sets. No `WorldStateManager`-driven unlock exists
-yet (§4 Ability Gates) — `chiModeUnlocked` is a plain manually-toggled bool on `PlayerController`
+yet (§4 Ability Gates) — `lockFacingUnlocked` is a plain manually-toggled bool on `PlayerController`
 for now, same precedent as its `jumpCharges`/`maxWallJumps`.
+
+**`ChiModeGlow` (the pulsing outer-glow visual built for the old design) is left in place,
+attached, dormant** — it still reads `LockFacingActive` and will still visibly pulse whenever the
+button is held, which is expected and not something to suppress; it's kept as-is specifically
+because it may get reused if/when a bigger "Chi Mode"/super-mode mechanic gets designed later.
 
 #### Analog Stick → Zone Mapping
 
@@ -1581,7 +1603,8 @@ long as the player can never have two of them active at once.
 
 #### MotionInputDetector — Real-Time Trie Resolution
 
-Component on the player. Only evaluates when `ChiModeActive = true`. A trie is built
+Component on the player. Evaluates unconditionally, every frame — see §3l "Lock Facing" for why
+this no longer depends on any held button. A trie is built
 from the active loadout's `MotionInputTriggerSO`s and walked forward, incrementally, as zone
 changes arrive — there is nothing to scan at button-press time, only a current position to
 read.
@@ -1630,10 +1653,9 @@ from the walk alone.)*
 
 **On button press:** check whether `effectOnComplete` at the current node is non-null and
 its `TriggerEffectSO`'s `confirmButton` matches this press. No match → the press falls
-through to `ComboSystem` as a normal attack — and either way, matched or not, Chi Mode itself
-ends if it was active (see "Chi Mode" above; `PlayerController.HandleAttackButton` is what
-actually sequences "ask the detector, then cancel"). Players who haven't unlocked `CHI_MODE`,
-aren't holding the button, or have nothing in their loadout that matches, experience zero
+through to `ComboSystem` as a normal attack (`PlayerController.HandleAttackButton`). Lock Facing
+plays no role in this check at all anymore — see "Lock Facing" above. Players who haven't
+unlocked `LOCK_FACING`, or have nothing in their loadout that matches, experience zero
 difference from the base combat system.
 
 **"Stay put, don't reset" on a mismatch reproduces the originally-intended skip-mode
@@ -1734,6 +1756,58 @@ codebase yet (`CameraManager`/Camera System, §3t, isn't built — see the TODO 
 Unbounded-range projectiles are expected to be the exception, not the default, so this gap
 is low-stakes in practice.
 
+**Spawning is timing-relative to the animation, which `SpawnProjectileEffectSO` alone cannot
+express — implemented instead as `AbilityAnimationState : ICombatState`, a generic reusable
+state, not a fireball-specific one.** The original sketch above (an `EffectSO.Execute()` that
+directly requests a projectile) assumed spawning happens at the same instant the motion
+completes. In practice the user wanted the fireball to leave the caster's hands partway through
+the throw animation (frame 3 specifically), and `Execute()` fires once, immediately, at
+button-press time — long before frame 3 of the resulting animation is ever reached. Only
+something ticking every frame *while the animation plays* can catch that moment.
+
+First pass got this half right and half wrong: the timing mechanism (below) was correct from the
+start, but it shipped as a dedicated `ThrowFireballState` holding its own copy of every
+fireball-specific field (`throwFireballClip`, `fireballProjectilePrefab`, `fireballHitboxData`,
+`fireballSpawnFrameIndex`, `fireballSpawnOffset`) as `[SerializeField]`s **on
+`PlayerCombatStateMachine` itself** — meaning the combat state machine had to know the internal
+configuration of one specific special, and a second projectile-style ability would have meant
+bolting on a second set of fireball-shaped fields next to it. That's exactly the "new subclass,
+zero changes elsewhere" property every other composed behavior in this design has been built
+around, broken for the one system that most needed it.
+
+Corrected: `AbilityAnimationState` is generic — clip, mid-clip frame index, and a plain
+`Action` callback, nothing fireball-specific in it at all. All of the fireball-specific data
+(clip, prefab, hitbox data, spawn offset, spawn frame index) now lives as fields on
+`ThrowFireballEffectSO` itself, which constructs its own `AbilityAnimationState` (closing over
+its own fields in the spawn callback) at `Execute()` time and hands it to a new
+`PlayerCombatStateMachine.TryEnterAbilityState(string stateId, ICombatState state)` — same
+eligibility gating as `TryEnterState` (grounded-only, matching every non-crouch/non-aerial
+attack's default bucket), just accepting a *dynamically-provided* state instance instead of
+requiring dictionary pre-registration in `Awake()`, since there's nothing to pre-register for a
+state whose configuration is only known by the effect that fires it. A second projectile
+ability is now just a second `AbilityEffectSO` instance with its own data — `PlayerCombatStateMachine`
+needs no changes at all. One wrinkle worth knowing: `ProjectileManager` is a scene instance, and
+a project asset (the effect SO) can't hold a persistent reference to one — `ThrowFireballEffectSO`
+looks it up via `FindAnyObjectByType` at cast time instead of serializing a reference, which is
+fine since casting a special is a rare, human-timescale event, not a per-frame cost.
+
+That threshold is computed from the `AnimationClip` asset's own live `frameRate`/`length`
+every `Enter()` (`(spawnFrameIndex / clip.frameRate) / clip.length`), deliberately not a Unity
+Animation Event with a baked timestamp — an Animation Event's time is fixed at authoring time
+and does not recompute if the clip's sample rate or frame count changes later, silently
+drifting off "frame 3." Reading the clip's properties live means retiming it and spawning at
+the new frame 3 both just work on the next play, no re-authoring step. Verified directly: at
+8fps/0.5s (this clip's current settings), frame index 2 (the 3rd frame) computes to
+normalizedTime 0.5, and stepping the Animator confirmed no projectile exists before that and
+one exists at/after it, every time.
+
+`ProjectileController`'s hitbox collider lives on the `PlayerHitbox` layer (reusing the
+existing melee-attack layer rather than adding a new one) — §3o's own aspirational 13-layer
+matrix isn't built yet; only 5 layers exist in the live project (`Ground`, `PlayerHitbox`,
+`PlayerHurtbox`, `EnemyHurtbox`, `NpcBody`), and `PlayerHitbox` already collides with both
+`EnemyHurtbox` (damage) and `Ground` (terrain detection) with zero collision-matrix changes
+needed. Revisit if/when §3o's fuller layer set actually gets built.
+
 **Spawning.** `MotionInputDetector` never calls `Instantiate` itself — a matched
 `MotionInputTriggerSO` fires `TriggerEffectSO.effect.Execute(caster)`, and a
 `SpawnProjectileEffectSO`'s `Execute` is what actually requests a projectile. All spawning
@@ -1743,9 +1817,44 @@ the same reason `EquipmentManager`/`AuraManager`/`WorldStateManager` are compone
 than static classes):
 
 ```csharp
-GameObject Spawn(GameObject prefab, Vector2 position, Vector2 direction, HitboxDataSO hitboxData);
+GameObject Spawn(GameObject prefab, Vector2 position, Vector2 direction, HitboxDataSO hitboxData, Transform caster = null);
 void       Despawn(ProjectileController instance);
 ```
+
+**`caster` was missing entirely in the first build, and it's load-bearing, not optional polish.**
+A spawn offset close enough to read as "leaving the caster's hand" (a few tenths of a unit,
+roughly chest height) overlaps the caster's own hurtbox far more easily than it looks like it
+should on screen. Without tracking who fired it, `ProjectileController.OnTriggerEnter2D` sees
+its own caster's `HurtboxController` as just another valid target and despawns itself the
+instant it spawns — indistinguishable, from the outside, from a range/terrain bug (raising
+`maxRange` does nothing, since the despawn never depended on range or terrain contact at all).
+Found by a user report ("it disappears almost instantly, looks like it's hitting the ground")
+that turned out to be a misdiagnosis in a useful direction — terrain and gravity were both
+confirmed clean, but chasing the report down the wrong path is what surfaced the real one.
+`ProjectileController.Launch`/`OnTriggerEnter2D` now take/check a `caster` `Transform` and skip
+any collider that `IsChildOf` it (covers both the caster's own root collider and any separate
+child hurtbox object under it, not just an exact-transform match — both were independently
+overlapping at spawn in practice).
+
+**Second bug, same shape: the fireball reached the target but never damaged it, every time.**
+`OnTriggerEnter2D` on the projectile and `OnTriggerEnter2D` on the target's
+`HurtboxZoneForwarder` are two independent callbacks reacting to the same physics overlap, in
+Unity-unspecified order — and the projectile was despawning itself (disabling its collider,
+calling `Destroy`) synchronously from inside its own callback the instant it found a valid
+target. If that ran before the forwarder's callback registered the hit with the target's
+`HitboxController` (for `LateUpdate` to resolve into actual damage), the hit was gone before it
+was ever recorded — and since a given pair of components tends to dispatch in the same order
+run to run, this wasn't a flaky race, it was a deterministic one that failed every single time.
+Fixed the same way `HitboxController` already avoids this class of hazard: don't act on the hit
+synchronously inside the trigger callback. `OnTriggerEnter2D` now only sets a `pendingDespawn`
+flag; the actual `Despawn()` happens in `LateUpdate`, which runs after every `OnTriggerEnter2D`
+for that physics step, across every object, has already fired — so the hit is always recorded
+before the projectile can go away. (`maxRange`/terrain despawns stay immediate; nothing else is
+racing against those.) Diagnosed initially by checking the fireball's collider against its own
+sprite bounds and the target's hurtbox against its sprite bounds, looking for a geometric gap
+that would explain "disappears in front of the target" — neither mismatch pointed that
+direction (the collider sits *inside* the sprite's bounds on both objects, not past them), which
+is what pointed at the trigger-dispatch race instead.
 
 **Plain `Instantiate`/`Destroy` for now, not pooling — a deliberate choice, not an
 oversight.** Pooling earns its complexity (careful reset-on-reuse for every field that could
@@ -3889,8 +3998,9 @@ room load and on `OnAbilityUnlocked` events. Opens with an animation and disable
 - `HIGH_KICK` (breaks cracked ceilings)
 - `IRON_BODY` (withstands environmental hazards)
 - `WIRE_FU` (grapple to ceiling anchor rings)
-- `CHI_MODE` (unlocks Chi Mode + motion input detection; `PlayerController.chiModeUnlocked` is a
-  manual stand-in for this check until `WorldStateManager` exists)
+- `LOCK_FACING` (unlocks the Lock Facing button; motion input detection itself is *not* gated by
+  this or any ability — see §3l "Lock Facing" — `PlayerController.lockFacingUnlocked` is a manual
+  stand-in for this check until `WorldStateManager` exists)
 - Additional motion input abilities defined via `TriggerEffectSO` — no code required per ability
 
 ---
@@ -4272,8 +4382,8 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 | 2 | `PlayerStateMachine.cs` | Gates all combat work | ✅ Done |
 | 3 | `HitboxController.cs` / `HurtboxController.cs` (+ `HurtboxZoneForwarder.cs`, `DamageCalculator.cs`) | Damage pipeline | ✅ Done — attacker-driven resolution, `Health.TakeDamage`/`OnEntityDamaged`, and hitbox reach authored via keyframed AnimationClip curves rather than a code reach-index; Head/Block/stagger/StatSheet still stubbed, see §3n |
 | 4 | `InputBuffer.cs` | Required before combo system | ✅ Done — `InputBuffer.cs` (`KungFuVania.Combat`), a capacity-16 timestamped ring buffer on the Player. `PlayerController` buffers a light/heavy attack press only when `TryEnterState` fails because the combat state machine is busy (not for any other rejection reason), then on return to `NONE` re-resolves the crouch/air/ground target state fresh against current locomotion — never a press-time snapshot — before retrying through `TryEnterState`, so a stale buffered attack fails closed instead of firing in a context it's no longer valid for. One flat `[SerializeField]` expiry window (0.4s, tuned to safely outlast the busiest current attack clip), measured from the press itself; no per-step `inputBufferWindow`/`inputExpireWindow` or cancellable-frame gating yet — that's `ComboSystem`/`ComboStep`'s job once combos exist |
-| 5 | `MotionInputDetector.cs` (+ skill loadout) | Moved up ahead of Stagger/Stat/Aura/Equipment — a matched pattern only needs to fire *something*, and can do that as a trimmed flat-damage attack today (same trim `DamageCalculator` already uses, see row 3) rather than waiting on the full `AbilityExecutionContext` chain. Facing-relative zone mirroring and the runtime resolution model are now fully designed — see §3l: a real-time trie walk over the player's active skill loadout, replacing the originally-drafted `MotionInputBuffer` ring buffer entirely (it's gone from the design, not just unbuilt). | ✅ Done — `StickInputConfigSO` zone mapping (stick + d-pad, both feeding one `Move` action), `TriggerSO`/`EffectSO`/`TriggerEffectSO`/`MotionInputTriggerSO`/`AbilityEffectSO`, `SkillLoadout` (owned pool + capped active loadout, no persistence), and `MotionInputDetector`'s trie (button-gated firing, charge steps included) are all built. Chi Mode itself (locked walking, Shift/left-bumper keybind, attack-fires-and-cancels with a release/re-press latch) lives on `PlayerController`/`PlayerStateMachine` — see §3l "Chi Mode". Only a placeholder `DebugLogAbilityEffectSO` exists as an actual effect (proves the pipeline end-to-end, not a real ability); a real animated special and the Projectile System (row 6) remain not started. Compiles clean and Play Mode starts without exceptions — not yet feel-tested with a real controller/keyboard. |
-| 6 | `ProjectileController.cs` + `ProjectileManager.cs` | Carrier for any traveling special fired by Motion Input System (e.g. a fireball) — fully designed now, see §3l "Projectile System". Listed after Motion Input System here for build-order bookkeeping only — functionally it needs to land alongside or before it, since a matched motion has nothing to fire without it. | Not started |
+| 5 | `MotionInputDetector.cs` (+ skill loadout) | Moved up ahead of Stagger/Stat/Aura/Equipment — a matched pattern only needs to fire *something*, and can do that as a trimmed flat-damage attack today (same trim `DamageCalculator` already uses, see row 3) rather than waiting on the full `AbilityExecutionContext` chain. Facing-relative zone mirroring and the runtime resolution model are now fully designed — see §3l: a real-time trie walk over the player's active skill loadout, replacing the originally-drafted `MotionInputBuffer` ring buffer entirely (it's gone from the design, not just unbuilt). | ✅ Done — `StickInputConfigSO` zone mapping (stick + d-pad, both feeding one `Move` action), `TriggerSO`/`EffectSO`/`TriggerEffectSO`/`MotionInputTriggerSO`/`AbilityEffectSO`, `SkillLoadout` (owned pool + capped active loadout, no persistence), and `MotionInputDetector`'s trie (button-gated firing, charge steps included) are all built and now evaluate **unconditionally** rather than gated behind a held button — see §3l "Lock Facing" (renamed down from "Chi Mode," which only locks facing now, not motion detection). QCF+Light throws a real animated fireball via `ThrowFireballState`/the Projectile System (row 6) — the earlier `DebugLogAbilityEffectSO` placeholder has been superseded. Compiles clean and Play Mode starts without exceptions — not yet feel-tested with a real controller/keyboard. |
+| 6 | `ProjectileController.cs` + `ProjectileManager.cs` | Carrier for any traveling special fired by Motion Input System (e.g. a fireball) — fully designed now, see §3l "Projectile System". Listed after Motion Input System here for build-order bookkeeping only — functionally it needs to land alongside or before it, since a matched motion has nothing to fire without it. | ✅ Done (first projectile: fireball) — `ProjectileController`/`ProjectileManager`/`ProjectilePulseAnimator` built; `ThrowFireballState` (a dedicated `ICombatState`, not `SpawnProjectileEffectSO`) spawns it frame-3-relative off the throw animation's own live `frameRate`/`length`, see §3l for why. No `PierceHitBehaviorSO`/`SpawnOnHitBehaviorSO`/`ProjectileMultiSpawnSO` yet — plug point wired, `null` (despawn-on-hit) is the only behavior that exists. No pooling (deliberate). Damage verified end-to-end against `TrainingDummy` (50 → 42 HP, matching the 8-damage `FireballHitboxData` asset exactly). |
 | 7 | `StaggerMeter.cs` | Required before combat tuning | Not started |
 | 8 | `StatSheet.cs` | Required before damage formula, health system, or chi pool | Not started |
 | 9 | `GameTickManager.cs` | Required before any tick-based aura | Not started |

@@ -271,6 +271,50 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a85f6ed86807a9545be65a98b36b3247, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Utility.HideOnPlay
+--- !u!1 &339190489
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 339190491}
+  - component: {fileID: 339190490}
+  m_Layer: 0
+  m_Name: ProjectileManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &339190490
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 339190489}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 872b9a63567950c46b1fc02ebeb15943, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.ProjectileManager
+--- !u!4 &339190491
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 339190489}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &519420028
 GameObject:
   m_ObjectHideFlags: 0
@@ -430,7 +474,6 @@ GameObject:
   - component: {fileID: 542349643}
   - component: {fileID: 542349645}
   - component: {fileID: 542349644}
-  - component: {fileID: 542349646}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -475,7 +518,7 @@ MonoBehaviour:
   backDashDistance: 1
   dodgeDistance: 2
   dodgeDoubleTapWindow: 0.25
-  chiModeUnlocked: 1
+  lockFacingUnlocked: 1
 --- !u!114 &542349633
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -764,48 +807,6 @@ MonoBehaviour:
   maxActiveSlots: 4
   activeLoadout:
   - {fileID: 11400000, guid: 43a4f077d38ebb4488764ab87ca43520, type: 2}
---- !u!114 &542349646
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 542349631}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f698621a81a9eb349971b6b8bc9fb484, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Player.ChiModeGlow
-  glowColor: {r: 1, g: 0.85, b: 0.35, a: 1}
-  layerCount: 10
-  maxScale: 1.25
-  alphaFalloff:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 0.2
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 1
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  pulseSpeed: 6
-  pulseAmount: 1
-  pulseFloorScale: 1.01
 --- !u!1 &619394800
 GameObject:
   m_ObjectHideFlags: 0
@@ -2169,3 +2170,4 @@ SceneRoots:
   - {fileID: 1720198478}
   - {fileID: 1011981001}
   - {fileID: 873162358}
+  - {fileID: 339190491}

@@ -12,3 +12,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2132209be5595db4b9f2258f0f71d329, type: 3}
   m_Name: ThrowFireballEffect
   m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Combat.ThrowFireballEffectSO
+  clip: {fileID: 7400000, guid: ef753b3d44d2f744e8530da3a1384af5, type: 2}
+  spawnFrameIndex: 2
+  projectilePrefab: {fileID: 2864418796350958497, guid: 4aae6c9ee7d5e3a48b719dcc26acfc63, type: 3}
+  projectileHitboxData: {fileID: 11400000, guid: 78e6d1a8d6171374e87a8116480d2201, type: 2}
+  spawnOffset: {x: 0.5, y: 0.5}

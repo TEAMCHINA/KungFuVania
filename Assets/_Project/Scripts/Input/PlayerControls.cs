@@ -140,7 +140,7 @@ namespace KungFuVania.Input
                     ""initialStateCheck"": false
                 },
                 {
-                    ""name"": ""ChiMode"",
+                    ""name"": ""LockFacing"",
                     ""type"": ""Button"",
                     ""id"": ""0d246bf8-27e9-4053-866f-bed8a52c0ad2"",
                     ""expectedControlType"": """",
@@ -377,7 +377,7 @@ namespace KungFuVania.Input
                     ""interactions"": """",
                     ""processors"": """",
                     ""groups"": """",
-                    ""action"": ""ChiMode"",
+                    ""action"": ""LockFacing"",
                     ""isComposite"": false,
                     ""isPartOfComposite"": false
                 },
@@ -388,7 +388,7 @@ namespace KungFuVania.Input
                     ""interactions"": """",
                     ""processors"": """",
                     ""groups"": """",
-                    ""action"": ""ChiMode"",
+                    ""action"": ""LockFacing"",
                     ""isComposite"": false,
                     ""isPartOfComposite"": false
                 }
@@ -404,7 +404,7 @@ namespace KungFuVania.Input
             m_Player_AttackLight = m_Player.FindAction("AttackLight", throwIfNotFound: true);
             m_Player_AttackHeavy = m_Player.FindAction("AttackHeavy", throwIfNotFound: true);
             m_Player_Dodge = m_Player.FindAction("Dodge", throwIfNotFound: true);
-            m_Player_ChiMode = m_Player.FindAction("ChiMode", throwIfNotFound: true);
+            m_Player_LockFacing = m_Player.FindAction("LockFacing", throwIfNotFound: true);
         }
 
         ~@PlayerControls()
@@ -490,7 +490,7 @@ namespace KungFuVania.Input
         private readonly InputAction m_Player_AttackLight;
         private readonly InputAction m_Player_AttackHeavy;
         private readonly InputAction m_Player_Dodge;
-        private readonly InputAction m_Player_ChiMode;
+        private readonly InputAction m_Player_LockFacing;
         /// <summary>
         /// Provides access to input actions defined in input action map "Player".
         /// </summary>
@@ -523,9 +523,9 @@ namespace KungFuVania.Input
             /// </summary>
             public InputAction @Dodge => m_Wrapper.m_Player_Dodge;
             /// <summary>
-            /// Provides access to the underlying input action "Player/ChiMode".
+            /// Provides access to the underlying input action "Player/LockFacing".
             /// </summary>
-            public InputAction @ChiMode => m_Wrapper.m_Player_ChiMode;
+            public InputAction @LockFacing => m_Wrapper.m_Player_LockFacing;
             /// <summary>
             /// Provides access to the underlying input action map instance.
             /// </summary>
@@ -567,9 +567,9 @@ namespace KungFuVania.Input
                 @Dodge.started += instance.OnDodge;
                 @Dodge.performed += instance.OnDodge;
                 @Dodge.canceled += instance.OnDodge;
-                @ChiMode.started += instance.OnChiMode;
-                @ChiMode.performed += instance.OnChiMode;
-                @ChiMode.canceled += instance.OnChiMode;
+                @LockFacing.started += instance.OnLockFacing;
+                @LockFacing.performed += instance.OnLockFacing;
+                @LockFacing.canceled += instance.OnLockFacing;
             }
 
             /// <summary>
@@ -596,9 +596,9 @@ namespace KungFuVania.Input
                 @Dodge.started -= instance.OnDodge;
                 @Dodge.performed -= instance.OnDodge;
                 @Dodge.canceled -= instance.OnDodge;
-                @ChiMode.started -= instance.OnChiMode;
-                @ChiMode.performed -= instance.OnChiMode;
-                @ChiMode.canceled -= instance.OnChiMode;
+                @LockFacing.started -= instance.OnLockFacing;
+                @LockFacing.performed -= instance.OnLockFacing;
+                @LockFacing.canceled -= instance.OnLockFacing;
             }
 
             /// <summary>
@@ -675,12 +675,12 @@ namespace KungFuVania.Input
             /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
             void OnDodge(InputAction.CallbackContext context);
             /// <summary>
-            /// Method invoked when associated input action "ChiMode" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
+            /// Method invoked when associated input action "LockFacing" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
             /// </summary>
             /// <seealso cref="UnityEngine.InputSystem.InputAction.started" />
             /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
             /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
-            void OnChiMode(InputAction.CallbackContext context);
+            void OnLockFacing(InputAction.CallbackContext context);
         }
     }
 }

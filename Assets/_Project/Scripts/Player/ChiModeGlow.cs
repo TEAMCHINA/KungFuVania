@@ -167,7 +167,7 @@ namespace KungFuVania.Player
                 pendingRebuild = false;
             }
 
-            var active = controller.ChiModeActive;
+            var active = controller.LockFacingActive;
 
             if (active != layersActive)
             {
