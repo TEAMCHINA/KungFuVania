@@ -505,13 +505,13 @@ MonoBehaviour:
   runSpeedMultiplier: 1.6
   jumpImpulseForce: 12
   jumpCutMultiplier: 0.5
-  jumpCharges: 0
+  jumpCharges: 2
   doubleTapWindow: 0.25
   groundCheckRadius: 0.1
   wallCheck: {fileID: 1551235991}
   wallCheckDistance: 0.4
   wallSlideSpeed: 2
-  maxWallJumps: 0
+  maxWallJumps: 1
   wallJumpVelocity: {x: 8, y: 12}
   wallStickTime: 0.2
   forwardDashDistance: 1

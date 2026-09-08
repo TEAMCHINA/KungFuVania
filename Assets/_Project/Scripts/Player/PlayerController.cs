@@ -424,5 +424,6 @@ namespace KungFuVania.Player
         public Vector2 GetPosition() => rb.position;
         public Vector2 GetBodyCenter() => rb.position + capsule.offset;
         public float BodyHalfWidth => capsule.size.x * 0.5f;
+        public float BodyHalfHeight => capsule.size.y * 0.5f;
     }
 }

@@ -816,7 +816,11 @@ AuraSO perfectDodgeAura                // aura applied on perfect dodge (assigne
   `SetInvulnerable(false)` at `iFrameEndFrame`, deactivating the body hurtbox GameObject so
   attacks physically whiff. Attacks with `piercesDodgeIFrames = true` bypass this via a
   separate `Hurtbox_Pierce` collider that is never deactivated (see 3n — I-Frames).
-- Position delta via direct transform + collision check (not physics) for precise frame control.
+- Position delta via direct transform + collision check (not physics) for precise frame control —
+  today's stand-in (`DodgeState.MoveWithoutTunneling`) sweeps a BoxCast over the body's full
+  height, not a single raycast at chest height: a raycast missed short obstacles entirely (e.g.
+  `LeftPlatform`, confirmed live) since nothing forces the obstacle to cross that one exact Y.
+  Same bug and fix as `NpcBlocker.MoveBy`'s push collision.
 - `DODGE_RECOVERY` window after the dodge prevents spam.
 
 **Perfect dodge** triggers when:
@@ -3449,23 +3453,47 @@ OnPlayerLanded { }          // published by Locomotion SM on FALL → grounded t
 
 (`OnRoomTransitionComplete` is already defined in Section 4 room transitions.)
 
-#### Parallax Background Layers (not yet designed)
+#### Parallax Background Layers
 
-Not yet designed — noted here as a known gap rather than silently discovered later. A single
-static background (no parallax) was used for the initial locomotion/combat test scene
-(`Assets/_Project/Art/Backgrounds/`), manually aligned to that scene's fixed camera position —
-it does not scroll and isn't a template for the real system.
+Built alongside `CameraManager`/`CameraTarget` (Build Order row 8), not deferred — a layer's
+scroll offset is inherently a fraction of camera movement, so it needs the camera to actually
+follow the player first, but there's no reason to design it as a separate later pass once that's
+true. Supersedes the single static background used for the initial locomotion/combat test scene
+(`Assets/_Project/Art/Backgrounds/`, manually aligned to that scene's fixed camera position, no
+scroll, sortingOrder -10) — that background is not a template for the real system, just a
+placeholder that happened to work with a camera that never moved.
 
-Real parallax needs `CameraManager`/`CameraTarget` to actually move first (they don't yet — see
-above); a layer's scroll offset is inherently a fraction of camera movement, so there's nothing
-to drive it against until the camera follows the player. When this is designed, expect:
-- Multiple background layers (far mountains, mid-ground scenery, near foreground) each moving at
-  a different fraction of camera delta-position (0 = fixed/skybox-like, 1 = moves with camera,
-  i.e. no parallax, values in between for depth layers behind gameplay).
-- Layer draw order via `SpriteRenderer.sortingOrder` on the `Default` sorting layer, most-negative
-  = furthest back (the test background above uses `sortingOrder = -10` as its only layer).
-- Likely a `ParallaxLayer` component (per-layer scroll factor) driven by `CameraManager` publishing
-  its own frame-to-frame movement delta, rather than each layer polling the camera directly.
+**Scroll factor** is a signed float per layer, not clamped to 0-1 — it spans three distinct
+depth ranges relative to the gameplay plane itself (which implicitly scrolls at exactly 1.0,
+matching the player/camera 1:1):
+- `0.0` — infinitely far background (fixed, skybox-like; nothing currently needs this but it's a
+  valid endpoint of the range)
+- `0.0` to `1.0`, exclusive — background depth layers (far mountains, mid-ground scenery); closer
+  to `1.0` reads as closer to the gameplay plane, closer to `0.0` reads as further away
+- `> 1.0` — **foreground layers**, rendered in front of gameplay (pillars, foliage, framing
+  elements the player walks behind). A factor greater than 1 is not a typo or an extrapolation
+  for its own sake — a layer closer to the camera than the gameplay plane genuinely needs to
+  scroll *faster* than the camera to read as closer, the same real-world parallax relationship
+  that makes distant mountains crawl and a foreground fence whip past. A foreground layer with a
+  factor of exactly `1.0` and nothing else would just look like background art badly pasted on
+  top of the action, not a layer with actual depth.
+
+**Draw order** uses `SpriteRenderer.sortingOrder` on the `Default` sorting layer (no new sorting
+layers needed — one sorting layer with enough spread in `sortingOrder` values covers every case
+here). Confirmed current live values to build against: `Background` (the placeholder) sits at
+`-10`, `Ground` at `0`, `TrainingDummy` at `5`, `Player` at `10`. Background depth layers get
+increasingly negative orders the further back they are (more negative = further back, same
+convention the placeholder already established); a foreground layer needs a `sortingOrder`
+*above* every gameplay sprite that should ever be capable of walking behind it — `20` is a safe
+starting value given the numbers above, with real headroom above the player's `10`.
+
+**`ParallaxLayer` component** (per-layer scroll factor, one instance per layer GameObject) is
+driven by `CameraManager` publishing its own frame-to-frame movement delta — layers don't poll
+the camera transform directly, they react to a delta the manager already computed once per
+frame. Keeps the layer count decoupled from how many things read camera position each frame, and
+matches the existing "publisher computes once, subscribers react" convention already used for
+`OnPlayerLanded` (`CameraTarget`) and the room/boss events (`CameraManager` itself) elsewhere in
+this section.
 
 ---
 
@@ -4411,7 +4439,18 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 
 ## 12. Build Order (Critical Path)
 
-| Order | File | Why first | Status |
+**Reordered from the original dependency-only sequencing** (rows 8 onward) once it became clear
+raw code dependency isn't the same question as "when does this system's value actually land."
+Stagger's original position ("required before combat tuning") assumed tuning combat means
+tuning it against a static `TrainingDummy` — but Super Armor and STAGGERED are PvE-pressure
+mechanics; they mean nothing without an opponent making decisions, so building them before
+Enemy AI exists means tuning blind. Applying that same "what does this need to actually matter"
+test surfaced two bigger gaps: Enemy AI (§2's full state machine) and the Camera System (§3t)
+were both completely absent from this table despite being fully designed — neither had ever been
+assigned a row at all. Audio (§8) is a third: also fully designed, also missing. All three are
+folded in below at the point their own reasoning puts them, not appended as an afterthought.
+
+| Order | File | Why here | Status |
 |---|---|---|---|
 | 1 | `EventBus.cs` | Everything communicates through this | ✅ Done |
 | 2 | `PlayerStateMachine.cs` | Gates all combat work | ✅ Done |
@@ -4419,15 +4458,18 @@ while drawing cosmetics, so alignment is always relative to the same anchor.
 | 4 | `InputBuffer.cs` | Required before combo system | ✅ Done — `InputBuffer.cs` (`KungFuVania.Combat`), a capacity-16 timestamped ring buffer on the Player. `PlayerController` buffers a light/heavy attack press only when `TryEnterState` fails because the combat state machine is busy (not for any other rejection reason), then on return to `NONE` re-resolves the crouch/air/ground target state fresh against current locomotion — never a press-time snapshot — before retrying through `TryEnterState`, so a stale buffered attack fails closed instead of firing in a context it's no longer valid for. One flat `[SerializeField]` expiry window (0.4s, tuned to safely outlast the busiest current attack clip), measured from the press itself; no per-step `inputBufferWindow`/`inputExpireWindow` or cancellable-frame gating yet — that's `ComboSystem`/`ComboStep`'s job once combos exist |
 | 5 | `MotionInputDetector.cs` (+ skill loadout) | Moved up ahead of Stagger/Stat/Aura/Equipment — a matched pattern only needs to fire *something*, and can do that as a trimmed flat-damage attack today (same trim `DamageCalculator` already uses, see row 3) rather than waiting on the full `AbilityExecutionContext` chain. Facing-relative zone mirroring and the runtime resolution model are fully designed — see §3l. | ✅ Done — `StickInputConfigSO` zone mapping (stick + d-pad, both feeding one `Move` action), `TriggerSO`/`EffectSO`/`TriggerEffectSO`/`MotionInputTriggerSO`/`AbilityEffectSO`, `SkillLoadout` (owned pool + capped active loadout, no persistence), and `MotionInputDetector` (button-gated firing, charge steps included) are all built and evaluate **unconditionally** — see §3l "Lock Facing" (renamed down from "Chi Mode," which only locks facing now, not motion detection). Detection itself is a lookback ring-buffer matcher, not the originally-built trie — replaced post-hoc after two real correctness bugs (§3l), with this project's first unit tests (`MotionMatcherTests`, 13/13 passing) covering the matcher in isolation. QCF+Light throws a real animated fireball via `ThrowFireballEffectSO`/`AbilityAnimationState`/the Projectile System (row 6) — the earlier `DebugLogAbilityEffectSO` placeholder has been superseded. Compiles clean, tests pass, Play Mode starts without exceptions — not yet feel-tested with a real controller/keyboard. |
 | 6 | `ProjectileController.cs` + `ProjectileManager.cs` | Carrier for any traveling special fired by Motion Input System (e.g. a fireball) — fully designed now, see §3l "Projectile System". Listed after Motion Input System here for build-order bookkeeping only — functionally it needs to land alongside or before it, since a matched motion has nothing to fire without it. | ✅ Done (first projectile: fireball) — `ProjectileController`/`ProjectileManager`/`ProjectilePulseAnimator` built; `AbilityAnimationState` (a generic `ICombatState`, not a fireball-specific one) spawns it frame-3-relative off the throw animation's own live `frameRate`/`length`, driven by config living on `ThrowFireballEffectSO` itself (composition fix — the combat state machine doesn't know fireball exists), see §3l for why. No `PierceHitBehaviorSO`/`SpawnOnHitBehaviorSO`/`ProjectileMultiSpawnSO` yet — plug point wired, `null` (despawn-on-hit) is the only behavior that exists. No pooling (deliberate). Two real post-hoc bugs found and fixed (§3l): self-collision against the caster's own hurtbox (fixed via `caster` exclusion), and a trigger-dispatch race that silently ate damage on every hit (fixed by deferring despawn to `LateUpdate`). Damage verified end-to-end against `TrainingDummy` prior to those fixes (50 → 42 HP) — worth a fresh confirmation pass now that both fixes have landed. |
-| 7 | `StaggerMeter.cs` | Required before combat tuning | Not started |
-| 8 | `StatSheet.cs` | Required before damage formula, health system, or chi pool | Not started |
-| 9 | `GameTickManager.cs` | Required before any tick-based aura | Not started |
-| 10 | `AuraManager.cs` + `AuraVisualController.cs` | Required before dodge, abilities, or status effects | Not started |
-| 11 | `EquipmentManager.cs` + `AbilityExecutionContext.cs` | Required before any ability executes damage | Not started |
-| 12 | `PlayerController` hooks (`ApplyImpulse`, `ForceLocomotionState`, etc.) | Required before any movement ability component | ✅ Done |
-| 13 | `WorldStateManager.cs` | Room persistence and ability unlocks | Not started |
-| 14 | `CharacterCustomizationController.cs` | Requires WorldStateManager for unlock queries and save/load | Not started |
-| 15 | `CinematicDirector.cs` | Required before any boss content | Not started |
+| 7 | `PlayerController` hooks (`ApplyImpulse`, `ForceLocomotionState`, etc.) | Required before any movement ability component | ✅ Done |
+| 8 | `CameraManager.cs` + `CameraTarget.cs` (+ parallax layers) | **Next task.** Zero dependency on any unbuilt system, and immediate payoff: a following camera changes how the existing single test scene feels to play, and nothing about room content (§4) can be meaningfully built or tested without a camera that actually follows the player between rooms first. Full design in §3t; parallax (background layers + a foreground layer) is now designed there too, not deferred — see that section. | Not started |
+| 9 | Basic SFX (hit/swing/footstep) — plumbing per §8 | Same reasoning as row 8: near-zero dependency, immediate feel payoff, doesn't need combat depth or AI to matter. The *adaptive* half of §8 (`Combat_Intensity`/`Phase`-driven music) is content-gated the same way Stagger is below — left for whenever there's more happening to react to. FMOD (`com.fmod.unity`) isn't installed yet, same "package not added" gap as Cinemachine (row 8) — confirm before starting. | Not started |
+| 10 | Enemy state machine (§2) + `EnemyDataSO.cs` + `AttackPatternSO.cs` | The actual missing prerequisite behind Stagger's original position — PATROL/DETECT/CHASE/ATTACK/STAGGERED/DOWN/GUARD/SEARCH/DEATH (§2) had no row at all despite being fully designed. Turns `TrainingDummy` into a real opponent; hard prerequisite for Stagger, combat tuning, and eventually bosses to mean anything. | Not started |
+| 11 | `WorldStateManager.cs` | The core Metroidvania mechanic (room persistence, ability unlocks) — doesn't need combat-depth systems, but gating rooms/unlocks is hollow without actual rooms to gate, hence after Camera. | Not started |
+| 12 | `StatSheet.cs` | Required before damage formula, health system, or chi pool. Moderate lift, real stat-driven numbers instead of `HitboxDataSO`'s current flat `damage` float — useful with or without AI, but derived-stat coefficients are explicitly TBD (§3i), so this needs a short balancing conversation alongside implementation, not pure heads-down coding. | Not started |
+| 13 | `StaggerMeter.cs` | Moved from row 7 in the original sequencing. Super Armor and STAGGERED are PvE-pressure mechanics — building them before Enemy AI (row 10) exists means tuning against a target that can't fight back. Sequenced right after AI for exactly that reason. | Not started |
+| 14 | `EquipmentManager.cs` + `AbilityExecutionContext.cs` | Required before any ability executes damage beyond the current trimmed flat-damage model. Itemization/build progression is more satisfying once AI exists to drop loot into (§3r assumes enemies drop items). | Not started |
+| 15 | `GameTickManager.cs` | Required before any tick-based aura | Not started |
+| 16 | `AuraManager.cs` + `AuraVisualController.cs` | Required before dodge, abilities, or status effects — natural follow-on once Equipment/abilities (row 14) exist to grant them | Not started |
+| 17 | `CharacterCustomizationController.cs` | Requires WorldStateManager for unlock queries and save/load | Not started |
+| 18 | `CinematicDirector.cs` | Required before any boss content | Not started |
 
 ---
 
