@@ -67,3 +67,6 @@ crashlytics-build.properties
 
 # Automated Unity MCP verification screenshots - not meant to be versioned
 /[Aa]ssets/[Ss]creenshots/
+
+# macOS Finder metadata files
+.DS_Store
