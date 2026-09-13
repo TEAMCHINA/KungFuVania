@@ -1,13 +1,28 @@
 fileFormatVersion: 2
-guid: b89da725dc17abf47b60c28b4885febe
+guid: d9753cb4a17604d688cdeac2c943c565
 TextureImporter:
   internalIDToNameTable:
   - first:
-      213: -5260181039105388239
-    second: KFV_WallSlide_01_0
+      213: -4908762699332224545
+    second: Sample_Scene-Near_Mountains_0
   - first:
-      213: -947684377080028502
-    second: KFV_WallSlide_01_1
+      213: 3808181676568383975
+    second: Sample_Scene-Near_Mountains_1
+  - first:
+      213: 6655109476389524013
+    second: Sample_Scene-Near_Mountains_2
+  - first:
+      213: -1516748700362999006
+    second: Sample_Scene-Near_Mountains_3
+  - first:
+      213: 8760159521191811074
+    second: Sample_Scene-Near_Mountains_4
+  - first:
+      213: -8443261315627401865
+    second: Sample_Scene-Near_Mountains_5
+  - first:
+      213: -8348864049570089139
+    second: Sample_Scene-Near_Mountains_6
   externalObjects: {}
   serializedVersion: 13
   mipmaps:
@@ -52,9 +67,9 @@ TextureImporter:
   spriteMode: 1
   spriteExtrude: 1
   spriteMeshType: 1
-  alignment: 9
-  spritePivot: {x: 0.55, y: 0.016}
-  spritePixelsToUnits: 343
+  alignment: 0
+  spritePivot: {x: 0.5, y: 0.5}
+  spritePixelsToUnits: 100
   spriteBorder: {x: 0, y: 0, z: 0, w: 0}
   spriteGenerateFallbackPhysicsShape: 1
   alphaUsage: 1
@@ -77,7 +92,7 @@ TextureImporter:
   platformSettings:
   - serializedVersion: 4
     buildTarget: DefaultTexturePlatform
-    maxTextureSize: 256
+    maxTextureSize: 2048
     resizeAlgorithm: 0
     textureFormat: -1
     textureCompression: 1
@@ -116,7 +131,7 @@ TextureImporter:
     forceMaximumCompressionQuality_BC6H_BC7: 0
   - serializedVersion: 4
     buildTarget: WebGL
-    maxTextureSize: 256
+    maxTextureSize: 2048
     resizeAlgorithm: 0
     textureFormat: -1
     textureCompression: 1
@@ -129,7 +144,7 @@ TextureImporter:
     forceMaximumCompressionQuality_BC6H_BC7: 0
   - serializedVersion: 4
     buildTarget: iOS
-    maxTextureSize: 256
+    maxTextureSize: 2048
     resizeAlgorithm: 0
     textureFormat: -1
     textureCompression: 1
@@ -144,45 +159,155 @@ TextureImporter:
     serializedVersion: 2
     sprites:
     - serializedVersion: 2
-      name: KFV_WallSlide_01_0
+      name: Sample_Scene-Near_Mountains_0
       rect:
         serializedVersion: 2
-        x: 0
-        y: 10
-        width: 378
-        height: 613
+        x: 102
+        y: 847
+        width: 123
+        height: 147
       alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+      pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: -1
       bones: []
-      spriteID: 131d0ede6351007b0800000000000000
-      internalID: -5260181039105388239
+      spriteID: fd97d9b255290ebb0800000000000000
+      internalID: -4908762699332224545
       vertices: []
       indices: 
       edges: []
       weights: []
     - serializedVersion: 2
-      name: KFV_WallSlide_01_1
+      name: Sample_Scene-Near_Mountains_1
       rect:
         serializedVersion: 2
-        x: 278
-        y: 616
-        width: 9
-        height: 8
+        x: 448
+        y: 895
+        width: 73
+        height: 33
       alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+      pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: -1
       bones: []
-      spriteID: aa225f0841629d2f0800000000000000
-      internalID: -947684377080028502
+      spriteID: 7e19208ee0169d430800000000000000
+      internalID: 3808181676568383975
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: Sample_Scene-Near_Mountains_2
+      rect:
+        serializedVersion: 2
+        x: 692
+        y: 859
+        width: 19
+        height: 63
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: d229889fec2bb5c50800000000000000
+      internalID: 6655109476389524013
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: Sample_Scene-Near_Mountains_3
+      rect:
+        serializedVersion: 2
+        x: 0
+        y: 0
+        width: 1536
+        height: 890
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 22bf355d71d63fae0800000000000000
+      internalID: -1516748700362999006
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: Sample_Scene-Near_Mountains_4
+      rect:
+        serializedVersion: 2
+        x: 702
+        y: 837
+        width: 9
+        height: 12
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 208d464dba6529970800000000000000
+      internalID: 8760159521191811074
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: Sample_Scene-Near_Mountains_5
+      rect:
+        serializedVersion: 2
+        x: 710
+        y: 837
+        width: 9
+        height: 14
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 77d3b38519283da80800000000000000
+      internalID: -8443261315627401865
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: Sample_Scene-Near_Mountains_6
+      rect:
+        serializedVersion: 2
+        x: 922
+        y: 835
+        width: 7
+        height: 7
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: d47785f8160e22c80800000000000000
+      internalID: -8348864049570089139
       vertices: []
       indices: 
       edges: []
@@ -192,7 +317,7 @@ TextureImporter:
     physicsShape: []
     bones: []
     spriteID: 5e97eb03825dee720800000000000000
-    internalID: 1537655665
+    internalID: 0
     vertices: []
     indices: 
     edges: []
@@ -201,8 +326,13 @@ TextureImporter:
     spriteCustomMetadata:
       entries: []
     nameFileIdTable:
-      KFV_WallSlide_01_0: -5260181039105388239
-      KFV_WallSlide_01_1: -947684377080028502
+      Sample_Scene-Near_Mountains_0: -4908762699332224545
+      Sample_Scene-Near_Mountains_1: 3808181676568383975
+      Sample_Scene-Near_Mountains_2: 6655109476389524013
+      Sample_Scene-Near_Mountains_3: -1516748700362999006
+      Sample_Scene-Near_Mountains_4: 8760159521191811074
+      Sample_Scene-Near_Mountains_5: -8443261315627401865
+      Sample_Scene-Near_Mountains_6: -8348864049570089139
   mipmapLimitGroupName: 
   pSDRemoveMatte: 0
   userData: 

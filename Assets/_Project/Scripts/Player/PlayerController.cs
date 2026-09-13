@@ -150,6 +150,12 @@ namespace KungFuVania.Player
             if (physicsSuspended) return;
             if (Time.time < wallJumpLockUntil) return;
 
+            if (combatStateMachine != null && combatStateMachine.IsInAttackState)
+            {
+                rb.linearVelocity = new Vector2(0f, rb.linearVelocity.y);
+                return;
+            }
+
             // Only ever diverges from facing while Lock Facing is held — outside that, HandleMove
             // flips FacingRight to match moveIntent's sign immediately, so this is always false.
             // Never eligible for the run multiplier: backing away is a deliberate slow retreat,

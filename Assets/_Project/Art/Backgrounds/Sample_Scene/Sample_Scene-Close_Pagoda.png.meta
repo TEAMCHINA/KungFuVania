@@ -1,13 +1,10 @@
 fileFormatVersion: 2
-guid: b89da725dc17abf47b60c28b4885febe
+guid: ae419023004c342db9c4209c9f14a76f
 TextureImporter:
   internalIDToNameTable:
   - first:
-      213: -5260181039105388239
-    second: KFV_WallSlide_01_0
-  - first:
-      213: -947684377080028502
-    second: KFV_WallSlide_01_1
+      213: -4943195793383245017
+    second: Sample_Scene-Close_Pagoda_0
   externalObjects: {}
   serializedVersion: 13
   mipmaps:
@@ -49,12 +46,12 @@ TextureImporter:
   nPOTScale: 0
   lightmap: 0
   compressionQuality: 50
-  spriteMode: 1
+  spriteMode: 2
   spriteExtrude: 1
   spriteMeshType: 1
-  alignment: 9
-  spritePivot: {x: 0.55, y: 0.016}
-  spritePixelsToUnits: 343
+  alignment: 0
+  spritePivot: {x: 0.5, y: 0.5}
+  spritePixelsToUnits: 100
   spriteBorder: {x: 0, y: 0, z: 0, w: 0}
   spriteGenerateFallbackPhysicsShape: 1
   alphaUsage: 1
@@ -77,7 +74,7 @@ TextureImporter:
   platformSettings:
   - serializedVersion: 4
     buildTarget: DefaultTexturePlatform
-    maxTextureSize: 256
+    maxTextureSize: 2048
     resizeAlgorithm: 0
     textureFormat: -1
     textureCompression: 1
@@ -116,7 +113,7 @@ TextureImporter:
     forceMaximumCompressionQuality_BC6H_BC7: 0
   - serializedVersion: 4
     buildTarget: WebGL
-    maxTextureSize: 256
+    maxTextureSize: 2048
     resizeAlgorithm: 0
     textureFormat: -1
     textureCompression: 1
@@ -129,7 +126,7 @@ TextureImporter:
     forceMaximumCompressionQuality_BC6H_BC7: 0
   - serializedVersion: 4
     buildTarget: iOS
-    maxTextureSize: 256
+    maxTextureSize: 2048
     resizeAlgorithm: 0
     textureFormat: -1
     textureCompression: 1
@@ -144,45 +141,23 @@ TextureImporter:
     serializedVersion: 2
     sprites:
     - serializedVersion: 2
-      name: KFV_WallSlide_01_0
+      name: Sample_Scene-Close_Pagoda_0
       rect:
         serializedVersion: 2
         x: 0
-        y: 10
-        width: 378
-        height: 613
+        y: 0
+        width: 1536
+        height: 1006
       alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+      pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: -1
       bones: []
-      spriteID: 131d0ede6351007b0800000000000000
-      internalID: -5260181039105388239
-      vertices: []
-      indices: 
-      edges: []
-      weights: []
-    - serializedVersion: 2
-      name: KFV_WallSlide_01_1
-      rect:
-        serializedVersion: 2
-        x: 278
-        y: 616
-        width: 9
-        height: 8
-      alignment: 0
-      pivot: {x: 0.5, y: 0.5}
-      border: {x: 0, y: 0, z: 0, w: 0}
-      customData: 
-      outline: []
-      physicsShape: []
-      tessellationDetail: -1
-      bones: []
-      spriteID: aa225f0841629d2f0800000000000000
-      internalID: -947684377080028502
+      spriteID: 72bbf28bd9d366bb0800000000000000
+      internalID: -4943195793383245017
       vertices: []
       indices: 
       edges: []
@@ -191,8 +166,8 @@ TextureImporter:
     customData: 
     physicsShape: []
     bones: []
-    spriteID: 5e97eb03825dee720800000000000000
-    internalID: 1537655665
+    spriteID: 
+    internalID: 0
     vertices: []
     indices: 
     edges: []
@@ -201,8 +176,7 @@ TextureImporter:
     spriteCustomMetadata:
       entries: []
     nameFileIdTable:
-      KFV_WallSlide_01_0: -5260181039105388239
-      KFV_WallSlide_01_1: -947684377080028502
+      Sample_Scene-Close_Pagoda_0: -4943195793383245017
   mipmapLimitGroupName: 
   pSDRemoveMatte: 0
   userData: 

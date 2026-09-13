@@ -51,6 +51,7 @@ namespace KungFuVania.Player
         public HitboxDataSO CrouchKickData => crouchKickData;
         public HitboxDataSO JumpPunchData => jumpPunchData;
         public HitboxDataSO JumpKickData => jumpKickData;
+        public bool IsInAttackState => currentState is AttackState;
 
         private void Awake()
         {

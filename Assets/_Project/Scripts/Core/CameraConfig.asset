@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2e9a27e9d660c46a78332b30fc8a770d, type: 3}
+  m_Name: CameraConfig
+  m_EditorClassIdentifier: Assembly-CSharp::KungFuVania.Camera.CameraConfigSO
+  lookaheadTime: 0.5
+  lookaheadSmoothing: 10
+  horizontalDamping: 0.2
+  verticalDamping: 0.5
+  verticalSnapThreshold: 2
+  verticalSnapDuration: 0.25
+  defaultOrthoSize: 4
+  bossOrthoSizeMin: 7
+  defaultShakeForce: 0.3

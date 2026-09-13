@@ -1,13 +1,16 @@
 fileFormatVersion: 2
-guid: b89da725dc17abf47b60c28b4885febe
+guid: 2f7e49a766e8c4cd1ab585154217abaa
 TextureImporter:
   internalIDToNameTable:
   - first:
-      213: -5260181039105388239
-    second: KFV_WallSlide_01_0
+      213: 8569619167938501794
+    second: Sample_Scene-Mid_Mountains_0
   - first:
-      213: -947684377080028502
-    second: KFV_WallSlide_01_1
+      213: -3123938702321514201
+    second: Sample_Scene-Mid_Mountains_1
+  - first:
+      213: -1413490861523682688
+    second: Sample_Scene-Mid_Mountains_2
   externalObjects: {}
   serializedVersion: 13
   mipmaps:
@@ -52,9 +55,9 @@ TextureImporter:
   spriteMode: 1
   spriteExtrude: 1
   spriteMeshType: 1
-  alignment: 9
-  spritePivot: {x: 0.55, y: 0.016}
-  spritePixelsToUnits: 343
+  alignment: 0
+  spritePivot: {x: 0.5, y: 0.5}
+  spritePixelsToUnits: 100
   spriteBorder: {x: 0, y: 0, z: 0, w: 0}
   spriteGenerateFallbackPhysicsShape: 1
   alphaUsage: 1
@@ -77,7 +80,7 @@ TextureImporter:
   platformSettings:
   - serializedVersion: 4
     buildTarget: DefaultTexturePlatform
-    maxTextureSize: 256
+    maxTextureSize: 2048
     resizeAlgorithm: 0
     textureFormat: -1
     textureCompression: 1
@@ -116,7 +119,7 @@ TextureImporter:
     forceMaximumCompressionQuality_BC6H_BC7: 0
   - serializedVersion: 4
     buildTarget: WebGL
-    maxTextureSize: 256
+    maxTextureSize: 2048
     resizeAlgorithm: 0
     textureFormat: -1
     textureCompression: 1
@@ -129,7 +132,7 @@ TextureImporter:
     forceMaximumCompressionQuality_BC6H_BC7: 0
   - serializedVersion: 4
     buildTarget: iOS
-    maxTextureSize: 256
+    maxTextureSize: 2048
     resizeAlgorithm: 0
     textureFormat: -1
     textureCompression: 1
@@ -144,45 +147,67 @@ TextureImporter:
     serializedVersion: 2
     sprites:
     - serializedVersion: 2
-      name: KFV_WallSlide_01_0
+      name: Sample_Scene-Mid_Mountains_0
       rect:
         serializedVersion: 2
         x: 0
-        y: 10
-        width: 378
-        height: 613
+        y: 0
+        width: 2172
+        height: 723
       alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+      pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: -1
       bones: []
-      spriteID: 131d0ede6351007b0800000000000000
-      internalID: -5260181039105388239
+      spriteID: 2ac5a5dba376de670800000000000000
+      internalID: 8569619167938501794
       vertices: []
       indices: 
       edges: []
       weights: []
     - serializedVersion: 2
-      name: KFV_WallSlide_01_1
+      name: Sample_Scene-Mid_Mountains_1
       rect:
         serializedVersion: 2
-        x: 278
-        y: 616
-        width: 9
-        height: 8
+        x: 1242
+        y: 691
+        width: 10
+        height: 11
       alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+      pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: -1
       bones: []
-      spriteID: aa225f0841629d2f0800000000000000
-      internalID: -947684377080028502
+      spriteID: 72908043d4a85a4d0800000000000000
+      internalID: -3123938702321514201
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: Sample_Scene-Mid_Mountains_2
+      rect:
+        serializedVersion: 2
+        x: 1904
+        y: 663
+        width: 12
+        height: 15
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 08abe99ec85426ce0800000000000000
+      internalID: -1413490861523682688
       vertices: []
       indices: 
       edges: []
@@ -192,7 +217,7 @@ TextureImporter:
     physicsShape: []
     bones: []
     spriteID: 5e97eb03825dee720800000000000000
-    internalID: 1537655665
+    internalID: 0
     vertices: []
     indices: 
     edges: []
@@ -201,8 +226,9 @@ TextureImporter:
     spriteCustomMetadata:
       entries: []
     nameFileIdTable:
-      KFV_WallSlide_01_0: -5260181039105388239
-      KFV_WallSlide_01_1: -947684377080028502
+      Sample_Scene-Mid_Mountains_0: 8569619167938501794
+      Sample_Scene-Mid_Mountains_1: -3123938702321514201
+      Sample_Scene-Mid_Mountains_2: -1413490861523682688
   mipmapLimitGroupName: 
   pSDRemoveMatte: 0
   userData: 
